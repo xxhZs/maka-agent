@@ -1192,6 +1192,22 @@ export type {
   VoiceTtsPolicy,
   VoiceTtsProvider,
   VoiceTtsRequest,
+  VoiceIntent,
+  VoiceAudioFormat,
+  EphemeralVoiceAudio,
+  VoiceModelRouteCapability,
+  VoiceRecognitionConfig,
+  VoiceRealtimeConfig,
+  VoiceSettings,
+  VoiceRoutePlan,
+  ResolveVoiceRouteInput,
+  VoiceBeginRequest,
+  VoiceBeginResult,
+  VoiceCapturedAudio,
+  VoiceFinishCaptureResult,
+  VoiceRealtimeClientSession,
+  VoiceCoordinatorToolName,
+  VoiceCoordinatorToolCall,
 } from './voice.js';
 export {
   VOICE_MAX_AUDIO_BYTES,
@@ -1203,6 +1219,10 @@ export {
   defaultVoiceCapabilitySnapshot,
   defaultVoiceCaptureCaps,
   defaultVoicePrivacyFlags,
+  defaultVoiceSettings,
+  normalizeVoiceSettings,
+  resolveVoiceRoute,
+  normalizeVoiceCoordinatorToolCall,
   normalizeVoiceInputMode,
   normalizeVoiceTranscriptText,
   normalizeVoiceTtsPolicy,
@@ -1384,7 +1404,7 @@ export {
 } from './model-catalog.js';
 
 // model-metadata.ts
-export { resolveModelVisionSupport } from './model-metadata.js';
+export { resolveModelVisionSupport, resolveModelVoiceMetadata } from './model-metadata.js';
 
 // settings.ts
 export type {
