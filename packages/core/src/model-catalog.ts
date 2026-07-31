@@ -260,9 +260,11 @@ function makeEntry(
   const contextWindow = normalizedModel.contextWindow ?? metadata.contextWindow;
   const maxOutputTokens = normalizedModel.maxOutputTokens ?? metadata.maxOutputTokens;
   const capabilities = mergeCapabilities(normalizedModel.capabilities, metadata.capabilities);
+  const endpointRoles = normalizedModel.endpointRoles ?? metadata.endpointRoles;
   const unavailableReason = deriveModelUnavailableReason(input, {
     ...normalizedModel,
     capabilities,
+    ...(endpointRoles ? { endpointRoles } : {}),
   });
   return {
     id: normalizedModel.id,
@@ -324,8 +326,17 @@ function makeMissingDefaultEntry(
   normalizedDefaultModel: string | undefined,
   recommendedRanks: ReadonlyMap<string, number>,
 ): ModelCatalogEntry {
-  const unavailableReason = missingEntryUnavailableReason(input, modelSource);
   const metadata = lookupModelMetadata(input.providerType, id);
+  const missingReason = missingEntryUnavailableReason(input, modelSource);
+  const unavailableReason =
+    missingReason === 'none' &&
+    isModelExplicitlyUnsupportedForChat({
+      id,
+      capabilities: metadata.capabilities,
+      endpointRoles: metadata.endpointRoles,
+    })
+      ? 'unsupported_for_chat'
+      : missingReason;
   const recommendedRank = recommendedRanks.get(id);
   return {
     id,
@@ -362,8 +373,17 @@ function makeMissingUserChoiceEntry(
   normalizedDefaultModel: string | undefined,
   recommendedRanks: ReadonlyMap<string, number>,
 ): ModelCatalogEntry {
-  const unavailableReason = missingEntryUnavailableReason(input, modelSource);
   const metadata = lookupModelMetadata(input.providerType, id);
+  const missingReason = missingEntryUnavailableReason(input, modelSource);
+  const unavailableReason =
+    missingReason === 'none' &&
+    isModelExplicitlyUnsupportedForChat({
+      id,
+      capabilities: metadata.capabilities,
+      endpointRoles: metadata.endpointRoles,
+    })
+      ? 'unsupported_for_chat'
+      : missingReason;
   const recommendedRank = recommendedRanks.get(id);
   return {
     id,
@@ -499,6 +519,12 @@ function isStale(
 }
 
 export function isModelExplicitlyUnsupportedForChat(model: ModelInfo): boolean {
+  // Endpoint roles are stronger than a generic modality. A model explicitly
+  // assigned only to transcription/realtime/speech endpoints must never leak
+  // into the conversation execution-model catalog. Unknown roles stay
+  // backwards-compatible; an explicit agent_chat role is required only when
+  // the role list is present.
+  if (model.endpointRoles && !model.endpointRoles.includes('agent_chat')) return true;
   const caps = model.capabilities;
   if (!caps) return false;
   if (caps.chat === false) return true;

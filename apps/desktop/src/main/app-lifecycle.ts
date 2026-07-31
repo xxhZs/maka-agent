@@ -39,6 +39,7 @@ import { runProjectStartupMigration } from './project-startup-migration.js';
 import { createAppQuitCoordinator } from './app-quit-coordinator.js';
 import { resolveDockPresentation } from './dock-presentation.js';
 import { resumeSafeBoundaryContinuationsOnStartup } from './startup-safe-boundary-resume.js';
+import { repairVoiceConnectionModelOwnership } from './voice-connection-model-ownership.js';
 
 type AssembledTools = ReturnType<typeof assembleDesktopTools>;
 export interface AppLifecycleDeps {
@@ -278,6 +279,16 @@ export function wireAppLifecycle(deps: AppLifecycleDeps): void {
       }
     } catch (error) {
       console.error('[credentials] legacy OAuth token import failed; files left intact:', error);
+    }
+    // Voice model ids used to be stored in Connection.defaultModel, which
+    // could make an ASR/realtime endpoint become the ordinary conversation
+    // execution model. Repair that ownership before the first window reads
+    // connections. This is local, idempotent, and leaves endpoint/credentials
+    // on the shared connection.
+    try {
+      await repairVoiceConnectionModelOwnership({ settingsStore, connectionStore });
+    } catch (error) {
+      console.error('[voice] failed to repair legacy connection model ownership:', error);
     }
   }
 

@@ -1050,6 +1050,54 @@ describe('ModelCatalogEntry', () => {
     );
   });
 
+  it('keeps explicit Voice-only endpoint models out of the chat catalog', () => {
+    const entries = buildModelCatalogEntries({
+      providerType: 'openai',
+      defaultModel: 'gpt-5.5',
+      models: [
+        { id: 'gpt-5.5', endpointRoles: ['agent_chat'] },
+        { id: 'gpt-audio', endpointRoles: ['agent_chat', 'audio_chat'] },
+        { id: 'gpt-4o-mini-transcribe', endpointRoles: ['transcription'] },
+        { id: 'gpt-realtime', endpointRoles: ['realtime_voice'] },
+      ],
+      modelSource: 'fetched',
+    });
+
+    assert.deepEqual(
+      entries.map((entry) => [entry.id, entry.unavailableReason, entry.canUseAsChatDefault]),
+      [
+        ['gpt-5.5', 'none', true],
+        ['gpt-audio', 'none', true],
+        ['gpt-4o-mini-transcribe', 'unsupported_for_chat', false],
+        ['gpt-realtime', 'unsupported_for_chat', false],
+      ],
+    );
+  });
+
+  it('blocks statically known Voice-only defaults even without a live inventory', () => {
+    const entries = buildModelCatalogEntries({
+      providerType: 'openai',
+      defaultModel: 'gpt-realtime',
+      fallbackModels: [],
+    });
+
+    assert.equal(entries[0]?.id, 'gpt-realtime');
+    assert.equal(entries[0]?.unavailableReason, 'unsupported_for_chat');
+    assert.equal(entries[0]?.canUseAsChatDefault, false);
+    assert.deepEqual(
+      validateChatDefaultModel({
+        providerType: 'openai',
+        defaultModel: 'gpt-realtime',
+        fallbackModels: [],
+      }),
+      {
+        ok: false,
+        reason: 'unsupported_for_chat',
+        entry: entries[0],
+      },
+    );
+  });
+
   it('uses merged static capabilities before deciding whether a partial provider model is chat-capable', () => {
     const input = {
       providerType: 'openai' as const,

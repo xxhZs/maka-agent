@@ -105,7 +105,7 @@ describe('voice IPC service', () => {
           prompt: 'Maka',
         },
       }),
-      connection: connection(['gpt-4o-mini-transcribe']),
+      connection: connection(['gpt-4.1']),
       fetch: fetchMock,
     });
     const begin = await voice.begin({ intent: 'dictate' });
@@ -219,7 +219,7 @@ describe('voice IPC service', () => {
           voice: 'marin',
         },
       }),
-      connection: connection(['gpt-realtime']),
+      connection: connection(['gpt-4.1']),
       fetch: fetchMock,
     });
     const offerSdp = 'v=0\r\no=offer';

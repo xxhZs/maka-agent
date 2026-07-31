@@ -93,6 +93,50 @@ describe('model catalog picker helpers', () => {
     );
   });
 
+  it('never offers transcription or realtime Voice models as conversation execution models', async () => {
+    const {
+      buildCatalogChatModelChoices,
+      buildCatalogModelChoices,
+      pickCatalogDefaultChatModel,
+    } = await importModelCatalogChoices();
+    const openai = connection({
+      slug: 'openai-api',
+      providerType: 'openai',
+      defaultModel: 'gpt-realtime',
+      enabledModelIds: [
+        'gpt-5.5',
+        'gpt-audio',
+        'gpt-4o-mini-transcribe',
+        'gpt-realtime',
+      ],
+      models: [
+        { id: 'gpt-5.5' },
+        { id: 'gpt-audio' },
+        { id: 'gpt-4o-mini-transcribe' },
+        { id: 'gpt-realtime' },
+      ],
+      modelSource: 'fetched',
+    });
+
+    assert.deepEqual(
+      buildCatalogChatModelChoices([openai]).map((choice) => choice.model),
+      ['gpt-5.5', 'gpt-audio'],
+    );
+    assert.deepEqual(
+      buildCatalogModelChoices(openai).map((entry) => [
+        entry.id,
+        entry.unavailableReason,
+      ]),
+      [
+        ['gpt-5.5', 'none'],
+        ['gpt-audio', 'none'],
+        ['gpt-4o-mini-transcribe', 'unsupported_for_chat'],
+        ['gpt-realtime', 'unsupported_for_chat'],
+      ],
+    );
+    assert.equal(pickCatalogDefaultChatModel(openai), undefined);
+  });
+
   it('limits Daily Review to enabled models while retaining its disabled current value', async () => {
     const { buildCatalogDailyReviewModelOptions } = await importModelCatalogChoices();
     const openrouter = connection({

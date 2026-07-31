@@ -44,9 +44,14 @@ describe('voice capture smoke Settings contract', () => {
       join(REPO_ROOT, 'apps/desktop/src/renderer/settings/voice-settings-page.tsx'),
       'utf8',
     );
+    const addFormSource = await readFile(
+      join(REPO_ROOT, 'apps/desktop/src/renderer/settings/provider-add-form.tsx'),
+      'utf8',
+    );
     const zhCopy = getVoiceSettingsCopy('zh');
 
     assert.match(src, /<AddProviderForm[\s\S]*providerType="openai-compatible"/);
+    assert.match(src, /modelOwnership="voice_setting"/);
     assert.match(
       src,
       /onClick=\{\(\) => setCreatingRecognitionConnection\(true\)\}/,
@@ -54,8 +59,23 @@ describe('voice capture smoke Settings contract', () => {
     );
     assert.match(
       src,
-      /const created = connections\.find\(\(connection\) => connection\.slug === slug\);[\s\S]*recognition:\s*\{[\s\S]*connectionSlug: created\.slug,[\s\S]*model: created\.defaultModel/,
-      'a newly created connection must become the selected recognition connection and model',
+      /finishCreatingRecognitionConnection\([\s\S]*slug: string,[\s\S]*model: string[\s\S]*recognition:\s*\{[\s\S]*connectionSlug: created\.slug,[\s\S]*model,/,
+      'a newly created connection must bind the separately owned Voice model',
+    );
+    assert.doesNotMatch(
+      src,
+      /model:\s*created\.defaultModel/,
+      'Voice must not read its ASR model from the conversation default-model field',
+    );
+    assert.match(
+      addFormSource,
+      /defaultModel:\s*ownsVoiceModel \? '' : normalizedDefaultModel \|\| recommendedDefaultModel/,
+      'a Voice-created connection must not write its model into Connection.defaultModel',
+    );
+    assert.match(
+      addFormSource,
+      /ownsVoiceModel \? \{ makeDefaultIfUnset: false \} : \{\}/,
+      'a Voice-created connection must not become the conversation default connection',
     );
     assert.match(
       src,
@@ -90,8 +110,13 @@ describe('voice capture smoke Settings contract', () => {
     assert.match(pageSource, /<VoiceRecognitionConnectionForm[\s\S]*onSaved=\{finishEditingRecognitionConnection\}/);
     assert.match(
       formSource,
-      /bridge\.update\(props\.connection\.slug,\s*\{[\s\S]*baseUrl: normalizedBaseUrl,[\s\S]*defaultModel: normalizedModel,[\s\S]*apiKey: apiKey\.trim\(\)/,
-      'the editor must save endpoint, ASR model, and an explicitly entered replacement key',
+      /bridge\.update\(props\.connection\.slug,\s*\{[\s\S]*baseUrl: normalizedBaseUrl,[\s\S]*apiKey: apiKey\.trim\(\)/,
+      'the editor must save endpoint and an explicitly entered replacement key',
+    );
+    assert.doesNotMatch(
+      formSource,
+      /defaultModel:\s*normalizedModel/,
+      'editing an ASR model must not mutate the conversation execution model',
     );
     assert.match(
       formSource,

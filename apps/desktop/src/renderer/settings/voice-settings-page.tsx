@@ -101,17 +101,20 @@ export function VoiceModelsSettingsPage(props: {
     }
   }
 
-  async function finishCreatingRecognitionConnection(slug: string): Promise<void> {
+  async function finishCreatingRecognitionConnection(
+    slug: string,
+    model: string,
+  ): Promise<void> {
     try {
       const connections = await window.maka.connections.list();
       const created = connections.find((connection) => connection.slug === slug);
-      if (!created?.defaultModel.trim()) {
+      if (!created || !model.trim()) {
         throw new Error(copy.recognitionConnectionModelMissing);
       }
       const saved = await updateVoice({
         recognition: {
           connectionSlug: created.slug,
-          model: created.defaultModel,
+          model,
         },
       });
       if (!saved || !voicePageMountedRef.current) return;
@@ -120,7 +123,7 @@ export function VoiceModelsSettingsPage(props: {
       setCreatingRecognitionConnection(false);
       toast.success(
         copy.recognitionConnectionCreated,
-        copy.recognitionConnectionCreatedDetail(created.name, created.defaultModel),
+        copy.recognitionConnectionCreatedDetail(created.name, model),
       );
     } catch (error) {
       if (!voicePageMountedRef.current) return;
@@ -440,9 +443,15 @@ export function VoiceModelsSettingsPage(props: {
             bridge={window.maka.connections}
             providerType="openai-compatible"
             existingSlugs={props.connections.map((connection) => connection.slug)}
+            modelOwnership="voice_setting"
+            modelField={{
+              label: copy.recognitionConnectionModel,
+              placeholder: copy.recognitionConnectionModelPlaceholder,
+              ariaLabel: copy.recognitionModelAria,
+            }}
             onCancel={() => setCreatingRecognitionConnection(false)}
-            onCreated={async (slug) => {
-              await finishCreatingRecognitionConnection(slug);
+            onCreated={async (slug, _modelDiscoveryError, model) => {
+              await finishCreatingRecognitionConnection(slug, model ?? '');
             }}
           />
         </ProviderConnectionDialog>

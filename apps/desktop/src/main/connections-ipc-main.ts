@@ -86,6 +86,12 @@ function normalizeCreateConnectionInput(input: CreateConnectionInput): CreateCon
   const apiKey = input.apiKey === undefined
     ? undefined
     : normalizeConnectionApiKeyForIpc(input.apiKey, 'apiKey');
+  if (
+    input.makeDefaultIfUnset !== undefined &&
+    typeof input.makeDefaultIfUnset !== 'boolean'
+  ) {
+    throw new Error('makeDefaultIfUnset must be a boolean');
+  }
   const slug = normalizeConnectionSlugForIpc(input.slug, 'connection slug');
   const normalizedInput = { ...input, slug, ...(apiKey !== undefined ? { apiKey } : {}) };
   const defaults = PROVIDER_DEFAULTS[normalizedInput.providerType];

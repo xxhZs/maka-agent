@@ -27,8 +27,14 @@ export function AddProviderForm(props: {
   bridge: ConnectionsBridge;
   providerType: ProviderType;
   existingSlugs: string[];
+  modelOwnership?: 'connection_default' | 'voice_setting';
+  modelField?: {
+    label: string;
+    placeholder: string;
+    ariaLabel: string;
+  };
   onCancel(): void;
-  onCreated(slug: string, modelDiscoveryError?: unknown): Promise<void>;
+  onCreated(slug: string, modelDiscoveryError?: unknown, configuredModel?: string): Promise<void>;
 }) {
   const locale = useUiLocale();
   const copy = getProviderSettingsCopy(locale).add;
@@ -48,7 +54,8 @@ export function AddProviderForm(props: {
 
   const isCloudflareWorkersAi = props.providerType === 'cloudflare-workers-ai';
   const requiresBaseUrl = !defaults.baseUrl && !isCloudflareWorkersAi;
-  const showsDefaultModel = recommendedDefaultModel.trim() === '';
+  const ownsVoiceModel = props.modelOwnership === 'voice_setting';
+  const showsDefaultModel = ownsVoiceModel || recommendedDefaultModel.trim() === '';
   const isCustomRelay = defaults.category === 'custom';
   const isExperimental = defaults.status === 'phase3-experimental';
   const isWiredOAuth = isWiredOAuthProvider(props.providerType);
@@ -91,12 +98,13 @@ export function AddProviderForm(props: {
         name: name || display.name,
         providerType: props.providerType,
         baseUrl: resolvedBaseUrl,
-        defaultModel: normalizedDefaultModel || recommendedDefaultModel,
+        defaultModel: ownsVoiceModel ? '' : normalizedDefaultModel || recommendedDefaultModel,
+        ...(ownsVoiceModel ? { makeDefaultIfUnset: false } : {}),
         ...(normalizedApiKey ? { apiKey: normalizedApiKey } : {}),
       });
       if (!addProviderMountedRef.current) return;
       let modelDiscoveryError: unknown;
-      if (supportsRemoteDiscovery) {
+      if (supportsRemoteDiscovery && !ownsVoiceModel) {
         try {
           await props.bridge.fetchModels(connection.slug);
         } catch (error) {
@@ -104,7 +112,11 @@ export function AddProviderForm(props: {
         }
       }
       if (!addProviderMountedRef.current) return;
-      await props.onCreated(connection.slug, modelDiscoveryError);
+      await props.onCreated(
+        connection.slug,
+        modelDiscoveryError,
+        ownsVoiceModel ? normalizedDefaultModel : undefined,
+      );
     } catch (err) {
       if (addProviderMountedRef.current) setError(providerPanelActionErrorMessage(err, locale));
     } finally {
@@ -208,15 +220,15 @@ export function AddProviderForm(props: {
       )}
       {showsDefaultModel && (
         <label>
-          <span>{copy.defaultModel}</span>
+          <span>{props.modelField?.label ?? copy.defaultModel}</span>
           <Input
             value={defaultModel}
             onChange={(event) => setDefaultModel(event.currentTarget.value)}
-            placeholder={copy.defaultModelPlaceholder}
+            placeholder={props.modelField?.placeholder ?? copy.defaultModelPlaceholder}
             disabled={isExperimental || busy}
-            aria-label={copy.defaultModelAria}
+            aria-label={props.modelField?.ariaLabel ?? copy.defaultModelAria}
           />
-          <small>{copy.defaultModelHelp}</small>
+          {!ownsVoiceModel ? <small>{copy.defaultModelHelp}</small> : null}
         </label>
       )}
       {error && <p className="providerError" role="alert">{error}</p>}

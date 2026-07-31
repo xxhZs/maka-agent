@@ -27,7 +27,7 @@ export function VoiceRecognitionConnectionForm(props: {
   const copy = getVoiceSettingsCopy(locale);
   const [baseUrl, setBaseUrl] = useState(() => effectiveBaseUrl(props.connection));
   const [apiKey, setApiKey] = useState('');
-  const [model, setModel] = useState(props.model || props.connection.defaultModel);
+  const [model, setModel] = useState(props.model);
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
   const submitGuard = useActionGuard<'submit'>();
@@ -55,7 +55,6 @@ export function VoiceRecognitionConnectionForm(props: {
     try {
       const updated = await props.bridge.update(props.connection.slug, {
         baseUrl: normalizedBaseUrl,
-        defaultModel: normalizedModel,
         ...(apiKey.trim() ? { apiKey: apiKey.trim() } : {}),
       });
       await props.onSaved(updated, normalizedModel);

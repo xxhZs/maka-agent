@@ -80,7 +80,7 @@ class FileConnectionStore implements ConnectionStore {
         updatedAt: now,
       };
       file.connections.push(next);
-      if (!file.defaultSlug) file.defaultSlug = next.slug;
+      if (!file.defaultSlug && input.makeDefaultIfUnset !== false) file.defaultSlug = next.slug;
       created = next;
       await this.write(file);
     });

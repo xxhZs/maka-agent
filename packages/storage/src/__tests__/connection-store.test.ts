@@ -20,6 +20,23 @@ describe('FileConnectionStore', () => {
     });
   });
 
+  test('lets a Voice-only connection opt out of the conversation default', async () => {
+    await withConnectionStore(async (store) => {
+      const created = await store.create({
+        slug: 'voice-recognition',
+        name: 'Voice recognition',
+        providerType: 'openai-compatible',
+        baseUrl: 'https://voice.example.test/v1',
+        defaultModel: '',
+        makeDefaultIfUnset: false,
+      });
+
+      assert.equal(created.defaultModel, '');
+      assert.deepEqual(created.enabledModelIds, []);
+      assert.equal(await store.getDefault(), null);
+    });
+  });
+
   test('migrates a legacy connection to only its default model enabled', async () => {
     await withConnectionStore(async (store, dir) => {
       await writeFile(

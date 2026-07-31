@@ -420,6 +420,12 @@ export interface CreateConnectionInput {
   providerType: ProviderType;
   baseUrl?: string;
   defaultModel?: string;
+  /**
+   * Connection creation historically promotes the first connection to the
+   * conversation default. Non-chat consumers (for example Voice recognition)
+   * opt out so their transport credentials never become a chat model choice.
+   */
+  makeDefaultIfUnset?: boolean;
   apiKey?: string;
 }
 

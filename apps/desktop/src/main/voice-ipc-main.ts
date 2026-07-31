@@ -310,7 +310,11 @@ export function createVoiceIpcService(deps: {
   ): Promise<VoiceModelRouteCapability | undefined> {
     if (!connectionSlug || !model) return undefined;
     const connection = await deps.connectionStore.get(connectionSlug);
-    if (!connection || !connection.enabled || !configuredModelExists(connection, model)) {
+    if (
+      !connection ||
+      !connection.enabled ||
+      (roleHint === 'current_agent' && !configuredModelExists(connection, model))
+    ) {
       return undefined;
     }
     const metadata = resolveModelVoiceMetadata(connection.providerType, connection.models, model);
