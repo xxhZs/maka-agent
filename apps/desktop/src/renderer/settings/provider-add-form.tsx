@@ -11,7 +11,7 @@ import {
   providerAuthSupportsApiKey,
   providerSupportsModelDiscovery,
 } from '@maka/core/llm-connections';
-import { Alert, AlertDescription, AlertTitle, Button, Chip, Input, useMountedRef, useUiLocale } from '@maka/ui';
+import { Alert, AlertDescription, AlertTitle, Button, Chip, TextInput, useMountedRef, useUiLocale } from '@maka/ui';
 import { buildCatalogRecommendedDefaultModel } from '../model-catalog-choices';
 import { PasswordInput } from './password-input';
 import { providerDisplay } from './provider-display';
@@ -124,7 +124,7 @@ export function AddProviderForm(props: {
     const errorId = `provider-key-dialog-${props.providerType}-error`;
     return (
       <form className="providerKeyDialogForm" onSubmit={submitApiKey}>
-        <label>
+        <div>
           <span>API Key</span>
           <PasswordInput
             value={apiKey}
@@ -137,7 +137,7 @@ export function AddProviderForm(props: {
             ariaDescribedBy={error ? errorId : undefined}
             disabled={busy}
           />
-        </label>
+        </div>
         {error && <p className="providerError" id={errorId} role="alert">{error}</p>}
         <div className="providerKeyDialogActions">
           <Button variant="ghost" isDisabled={busy} onClick={props.onCancel} label={copy.cancel} />
@@ -161,7 +161,7 @@ export function AddProviderForm(props: {
         </Alert>
       )}
       {supportsApiKey && (
-        <label>
+        <div>
           <span>{copy.apiKeyLabel(requiresApiKey)}</span>
           <PasswordInput
             value={apiKey}
@@ -173,51 +173,68 @@ export function AddProviderForm(props: {
             ariaLabel={`${display.name} ${copy.apiKey}`}
             disabled={isExperimental || busy}
           />
-        </label>
+        </div>
       )}
-      <label>
+      <div>
         <span>{copy.slug}</span>
-        <Input value={slug} onChange={(event) => setSlug(event.currentTarget.value)} placeholder="my-provider" disabled={isExperimental || busy} aria-label={copy.slugAria} />
-      </label>
-      <label>
+        <TextInput
+          value={slug}
+          onChange={(value) => setSlug(value)}
+          placeholder="my-provider"
+          isDisabled={isExperimental || busy}
+          label={copy.slugAria}
+          isLabelHidden
+        />
+      </div>
+      <div>
         <span>{copy.name}</span>
-        <Input value={name} onChange={(event) => setName(event.currentTarget.value)} placeholder={display.name} disabled={isExperimental || busy} aria-label={copy.nameAria} />
-      </label>
+        <TextInput
+          value={name}
+          onChange={(value) => setName(value)}
+          placeholder={display.name}
+          isDisabled={isExperimental || busy}
+          label={copy.nameAria}
+          isLabelHidden
+        />
+      </div>
       {isCloudflareWorkersAi ? (
-        <label>
+        <div>
           <span>{copy.accountIdLabel}</span>
-          <Input
+          <TextInput
             value={cloudflareAccountId}
-            onChange={(event) => setCloudflareAccountId(event.currentTarget.value)}
+            onChange={(value) => setCloudflareAccountId(value)}
             placeholder={copy.accountIdPlaceholder}
-            disabled={busy}
-            aria-label={copy.accountIdAria}
+            isDisabled={busy}
+              label={copy.accountIdAria}
+              isLabelHidden
           />
-        </label>
+        </div>
       ) : (
-        <label>
+        <div>
           <span>{copy.endpointLabel(requiresBaseUrl)}</span>
-          <Input
+          <TextInput
             value={baseUrl}
-            onChange={(event) => setBaseUrl(event.currentTarget.value)}
+            onChange={(value) => setBaseUrl(value)}
             placeholder={defaults.baseUrl || 'https://…'}
-            disabled={isExperimental || busy}
-            aria-label={copy.endpointAria}
+            isDisabled={isExperimental || busy}
+              label={copy.endpointAria}
+              isLabelHidden
           />
-        </label>
+        </div>
       )}
       {showsDefaultModel && (
-        <label>
+        <div>
           <span>{copy.defaultModel}</span>
-          <Input
+          <TextInput
             value={defaultModel}
-            onChange={(event) => setDefaultModel(event.currentTarget.value)}
+            onChange={(value) => setDefaultModel(value)}
             placeholder={copy.defaultModelPlaceholder}
-            disabled={isExperimental || busy}
-            aria-label={copy.defaultModelAria}
+            isDisabled={isExperimental || busy}
+              label={copy.defaultModelAria}
+              isLabelHidden
           />
           <small>{copy.defaultModelHelp}</small>
-        </label>
+        </div>
       )}
       {error && <p className="providerError" role="alert">{error}</p>}
       <div className="providerActions">

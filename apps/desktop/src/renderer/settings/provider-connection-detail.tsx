@@ -6,10 +6,7 @@ import {
   AlertDescription,
   AlertTitle,
   Button,
-  FieldDescription,
-  FieldRoot,
-  Input,
-  Label,
+  TextInput,
   RelativeTime,
   useMountedRef,
   useToast,
@@ -127,17 +124,16 @@ function ConnectionDetailInner(props: ConnectionDetailProps) {
     <div className="providerEditor providerConnectionManager">
       {supportsApiKey && (
         <div className="providerCredentialTask">
-          <FieldRoot className="grid gap-1.5">
-            <Label className="text-xs text-foreground-secondary">{copy.modelKey}</Label>
-            <FieldDescription>{apiKeyStatusHint}</FieldDescription>
+          <div className="grid gap-1.5">
             <PasswordInput
               value={apiKey}
               onChange={setApiKey}
               placeholder={hasSecret === true ? '••••••••' : copy.pasteModelKey}
               ariaLabel={copy.modelKeyAria(display.name)}
+              description={apiKeyStatusHint}
               disabled={detailActionBusy}
             />
-          </FieldRoot>
+          </div>
           <div className="providerCredentialActions">
             {defaults.signupUrl && (
               <a
@@ -261,19 +257,17 @@ function ConnectionEndpointField(props: {
 }) {
   const copy = getProviderSettingsCopy(useUiLocale()).detail;
   return (
-    <FieldRoot className="grid gap-1.5">
-      <Label className="text-xs text-foreground-secondary">{copy.endpoint}</Label>
-      {props.fixedOAuth && <FieldDescription>{copy.oauthFixed}</FieldDescription>}
-      <Input
+    <div className="grid gap-1.5">
+      <TextInput
+        label={copy.endpoint}
+        description={props.fixedOAuth ? copy.oauthFixed : undefined}
         value={props.baseUrl}
-        onChange={(event) => props.onChange(event.currentTarget.value)}
+        onChange={(value) => props.onChange(value)}
         placeholder={props.defaultsBaseUrl}
-        readOnly={props.fixedOAuth}
-        disabled={props.disabled}
-        aria-readonly={props.fixedOAuth ? 'true' : undefined}
-        aria-label={props.fixedOAuth ? copy.endpointFixedAria : copy.endpointAria}
+        isDisabled={props.disabled || props.fixedOAuth}
+        disabledMessage={props.fixedOAuth ? copy.oauthFixed : undefined}
       />
-    </FieldRoot>
+    </div>
   );
 }
 
