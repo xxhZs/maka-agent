@@ -205,8 +205,8 @@ export function AddProviderForm(props: {
             onChange={(value) => setCloudflareAccountId(value)}
             placeholder={copy.accountIdPlaceholder}
             isDisabled={busy}
-              label={copy.accountIdAria}
-              isLabelHidden
+            label={copy.accountIdAria}
+            isLabelHidden
           />
         </div>
       ) : (
@@ -217,8 +217,8 @@ export function AddProviderForm(props: {
             onChange={(value) => setBaseUrl(value)}
             placeholder={defaults.baseUrl || 'https://…'}
             isDisabled={isExperimental || busy}
-              label={copy.endpointAria}
-              isLabelHidden
+            label={copy.endpointAria}
+            isLabelHidden
           />
         </div>
       )}
@@ -230,8 +230,8 @@ export function AddProviderForm(props: {
             onChange={(value) => setDefaultModel(value)}
             placeholder={copy.defaultModelPlaceholder}
             isDisabled={isExperimental || busy}
-              label={copy.defaultModelAria}
-              isLabelHidden
+            label={copy.defaultModelAria}
+            isLabelHidden
           />
           <small>{copy.defaultModelHelp}</small>
         </div>
