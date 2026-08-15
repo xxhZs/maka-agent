@@ -125,6 +125,10 @@ test('Agent can inspect, define, test, activate, immediately invoke, update safe
       sum: 15,
       revision: 'v1',
     });
+    assert.deepEqual(
+      await invoke.impl({ toolName: 'Add', args: '{"left":9,"right":6}' }, context),
+      { sum: 15, revision: 'v1' },
+    );
 
     const broken = (await define.impl(
       definition('2.0.0', `export default { WrongName: () => ({ revision: 'broken' }) };`),

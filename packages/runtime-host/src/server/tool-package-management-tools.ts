@@ -394,8 +394,9 @@ export class HostToolPackageManagementTools {
           .resolveTools(context.sessionId, [])
           .find(({ name }) => name === input.toolName);
         if (!tool) throw new Error(`Active session Tool was not found: ${input.toolName}`);
-        await validateArgs(tool, input.args);
-        const result = await tool.impl(input.args, context);
+        const args = normalizeInvokeArgs(input.args);
+        await validateArgs(tool, args);
+        const result = await tool.impl(args, context);
         if (ownership) {
           const installed = await this.store.load(ownership.extensionId, ownership.revision);
           const stateKey = installed.manifest.tools.find(({ name }) => name === input.toolName)
@@ -430,6 +431,21 @@ export class HostToolPackageManagementTools {
         return result;
       },
     });
+  }
+}
+
+/**
+ * Some OpenAI-compatible providers encode an unconstrained nested `unknown`
+ * argument as a JSON string even though the Tool schema asks for an object.
+ * Accept that wire-compatible form at the management boundary, while leaving
+ * ordinary string-valued Tool inputs untouched when parsing fails.
+ */
+function normalizeInvokeArgs(value: unknown): unknown {
+  if (typeof value !== 'string' || value.length > 256 * 1024) return value;
+  try {
+    return JSON.parse(value) as unknown;
+  } catch {
+    return value;
   }
 }
 
