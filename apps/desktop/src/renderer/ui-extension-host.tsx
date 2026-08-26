@@ -8,10 +8,11 @@ import {
   useState,
   type ReactNode,
 } from 'react';
-import type {
-  ExtensionUiContributionProjection,
-  ExtensionUiSnapshotResult,
-  ExtensionUiStateValue,
+import {
+  EXTENSION_UI_AGENT_RPC_METHOD,
+  type ExtensionUiContributionProjection,
+  type ExtensionUiSnapshotResult,
+  type ExtensionUiStateValue,
 } from '@maka/runtime-host/protocol';
 import { uiExtensionFrameUrl } from './ui-extension-frame-url.js';
 import { UiPluginRuntime } from './ui-plugin-runtime.js';
@@ -292,8 +293,8 @@ function SandboxedUiFrame({
         extensionId: contribution.extensionId,
         generation: contribution.generation,
       };
-      const operation = isSessionBridgeRequest(request)
-        ? runSessionBridgeRequest(contribution, request)
+      const operation = isAgentBridgeRequest(request)
+        ? runAgentBridgeRequest(contribution, identity, request)
         : request.kind === 'config'
           ? window.maka.runtimeHost.query('extension.configuration.query', {
               entryId: contribution.entryId,
@@ -453,9 +454,7 @@ type UiBridgeRequest =
   | { id: string; kind: 'get' | 'delete'; key: string }
   | { id: string; kind: 'set'; key: string; value: unknown }
   | { id: string; kind: 'invoke'; method: string; args: unknown }
-  | { id: string; kind: 'session_list' }
-  | { id: string; kind: 'session_send'; sessionId?: string; text: string }
-  | { id: string; kind: 'session_stop'; sessionId: string };
+  | { id: string; kind: 'agent_invoke'; method: string; input: unknown };
 
 function decodeBridgeRequest(value: unknown, token: string): UiBridgeRequest | null {
   if (!value || typeof value !== 'object') return null;
@@ -468,24 +467,16 @@ function decodeBridgeRequest(value: unknown, token: string): UiBridgeRequest | n
     if (typeof request.method !== 'string' || !/^[A-Za-z][A-Za-z0-9_-]{0,127}$/u.test(request.method)) return null;
     return { id: request.id, kind: request.kind, method: request.method, args: request.args };
   }
-  if (request.kind === 'session_list') return { id: request.id, kind: request.kind };
-  if (request.kind === 'session_send') {
-    if (
-      (request.sessionId !== undefined && !isBridgeIdentifier(request.sessionId)) ||
-      typeof request.text !== 'string' ||
-      request.text.trim().length === 0 ||
-      request.text.length > 64 * 1024
-    ) return null;
+  if (request.kind === 'agent_invoke') {
+    if (typeof request.method !== 'string' || !/^[a-z][A-Za-z0-9.]{0,63}$/u.test(request.method)) {
+      return null;
+    }
     return {
       id: request.id,
       kind: request.kind,
-      ...(request.sessionId ? { sessionId: request.sessionId } : {}),
-      text: request.text,
+      method: request.method,
+      input: request.input,
     };
-  }
-  if (request.kind === 'session_stop') {
-    if (!isBridgeIdentifier(request.sessionId)) return null;
-    return { id: request.id, kind: request.kind, sessionId: request.sessionId };
   }
   if (request.kind !== 'get' && request.kind !== 'set' && request.kind !== 'delete') return null;
   if (typeof request.key !== 'string' || !/^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$/u.test(request.key)) return null;
@@ -494,53 +485,42 @@ function decodeBridgeRequest(value: unknown, token: string): UiBridgeRequest | n
     : { id: request.id, kind: request.kind, key: request.key };
 }
 
-function isBridgeIdentifier(value: unknown): value is string {
-  return typeof value === 'string' && value.length > 0 && value.length <= 128 && !/[\r\n\0]/u.test(value);
-}
-
-function isSessionBridgeRequest(
+function isAgentBridgeRequest(
   request: UiBridgeRequest,
-): request is Extract<UiBridgeRequest, { kind: `session_${string}` }> {
-  return request.kind === 'session_list' ||
-    request.kind === 'session_send' ||
-    request.kind === 'session_stop';
+): request is Extract<UiBridgeRequest, { kind: 'agent_invoke' }> {
+  return request.kind === 'agent_invoke';
 }
 
-async function runSessionBridgeRequest(
+function runAgentBridgeRequest(
   contribution: ExtensionUiContributionProjection,
-  request: Extract<UiBridgeRequest, { kind: `session_${string}` }>,
+  identity: {
+    readonly scopeId: string;
+    readonly entryId: string;
+    readonly extensionId: string;
+    readonly generation: number;
+  },
+  request: Extract<UiBridgeRequest, { kind: 'agent_invoke' }>,
 ): Promise<unknown> {
   if (contribution.surface !== 'app.root' || contribution.sessionAccess !== true) {
-    throw new Error('This UI Extension has no Session capability');
+    throw new Error('This UI Extension has no Agent capability');
   }
-  if (request.kind === 'session_list') {
-    const sessions = await window.maka.sessions.list();
-    return {
-      sessions: sessions.map((session) => ({
-        id: session.id,
-        name: session.name,
-        status: session.status,
-        lastMessageAt: session.lastMessageAt,
-        lastMessagePreview: session.lastMessagePreview,
-        runningTurnIds: session.runningTurnIds ?? [],
-        model: session.model,
-      })),
-    };
-  }
-  if (request.kind === 'session_stop') {
-    await window.maka.sessions.stop(request.sessionId, { source: 'stop_button' });
-    return { ok: true };
-  }
-  const session = request.sessionId
-    ? (await window.maka.sessions.list()).find(({ id }) => id === request.sessionId)
-    : await window.maka.sessions.create();
-  if (!session) throw new Error('Maka Session does not exist');
-  const turnId = crypto.randomUUID();
-  const result = await window.maka.sessions.send(session.id, {
-    type: 'send',
-    turnId,
-    text: request.text.trim(),
+  return invokeUiAgent(identity, request.method, request.input);
+}
+
+async function invokeUiAgent(
+  identity: {
+    readonly scopeId: string;
+    readonly entryId: string;
+    readonly extensionId: string;
+    readonly generation: number;
+  },
+  method: string,
+  input: unknown,
+): Promise<unknown> {
+  const result = await window.maka.runtimeHost.command('extension.ui.rpc.invoke', {
+    ...identity,
+    method: EXTENSION_UI_AGENT_RPC_METHOD,
+    args: { method, input } as ExtensionUiStateValue,
   });
-  if (!result.ok) throw new Error('Prompt was rejected by Skill invocation');
-  return { ok: true, sessionId: session.id, turnId };
+  return result.value;
 }

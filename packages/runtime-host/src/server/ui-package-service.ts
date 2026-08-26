@@ -2,7 +2,9 @@ import type { MakaToolContext } from '@maka/runtime/tool-runtime';
 import { join } from 'node:path';
 import {
   InProcessPackageActivation,
+  PACKAGE_AGENT_RUNTIME_METHODS,
   type PackageAgentRuntime,
+  type PackageAgentRuntimeMethod,
 } from './in-process-package-runtime.js';
 import type { InstalledToolPackage, ToolPackageManifest } from './plugin-runtime-manifest.js';
 import type { InstalledUiPackage } from './plugin-ui-manifest.js';
@@ -13,6 +15,38 @@ export class UiPackageService {
 
   setAgentRuntime(runtime: PackageAgentRuntime): void {
     this.#agents = runtime;
+  }
+
+  async invokeAgent(
+    installed: InstalledUiPackage,
+    value: unknown,
+    signal: AbortSignal,
+  ): Promise<unknown> {
+    if (!this.#agents) throw new Error('Maka Agent Runtime is unavailable');
+    if (!value || typeof value !== 'object' || Array.isArray(value)) {
+      throw new TypeError('UI Agent request must be an object');
+    }
+    const request = value as Record<string, unknown>;
+    if (Object.keys(request).some((key) => key !== 'method' && key !== 'input')) {
+      throw new TypeError('UI Agent request contains an unknown field');
+    }
+    if (
+      typeof request.method !== 'string' ||
+      !PACKAGE_AGENT_RUNTIME_METHODS.includes(request.method as PackageAgentRuntimeMethod)
+    ) {
+      throw new TypeError('UI Agent method is invalid');
+    }
+    const method = request.method as PackageAgentRuntimeMethod;
+    const result = await this.#agents.invoke(method, request.input ?? {}, {
+      sessionId: `ui:${installed.extensionId}`,
+      turnId: `ui-agent:${method}`,
+      cwd: installed.root,
+      toolCallId: `ui-agent:${method}`,
+      abortSignal: signal,
+      callerExtensionId: installed.extensionId,
+      origin: 'host',
+    });
+    return result === undefined ? null : JSON.parse(JSON.stringify(result));
   }
 
   async healthCheck(installed: InstalledUiPackage): Promise<void> {

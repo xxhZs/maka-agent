@@ -114,9 +114,10 @@ describe('Desktop UI extension shell', () => {
     assert.match(bridged, /setState/);
     assert.match(bridged, /deleteState/);
     assert.match(bridged, /invoke/);
-    assert.match(bridged, /session_list/);
-    assert.match(bridged, /session_send/);
-    assert.match(bridged, /session_stop/);
+    assert.match(bridged, /agent_invoke/);
+    assert.match(bridged, /agents:agents/);
+    assert.doesNotMatch(bridged, /sessions:sessions/);
+    assert.doesNotMatch(bridged, /session_(?:list|send|stop)/);
     assert.match(bridged, /safe_mode/);
     assert.match(bridged, /maka-ui-slot-layout\/v1/);
     assert.match(bridged, /data-maka-slot/);

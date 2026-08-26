@@ -201,6 +201,9 @@ export interface ExtensionUiRpcInvokeResult {
   readonly value: ExtensionUiStateValue;
 }
 
+/** Reserved UI Host RPC method that adapts the sandbox bridge to the Host Agent Registry. */
+export const EXTENSION_UI_AGENT_RPC_METHOD = '$maka.agents';
+
 export type ExtensionCompositionMutateInput =
   | {
       readonly kind: 'enable';

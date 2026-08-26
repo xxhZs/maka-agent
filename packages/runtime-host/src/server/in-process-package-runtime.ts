@@ -46,29 +46,32 @@ export interface PackageAgentStopInput {
   readonly runId: string;
 }
 
-export type PackageAgentRuntimeMethod =
-  | 'create'
-  | 'resume'
-  | 'get'
-  | 'list'
-  | 'roots'
-  | 'run'
-  | 'stop'
-  | 'agent.followup'
-  | 'agent.steer'
-  | 'agent.cancel'
-  | 'agent.whenIdle'
-  | 'agent.retract'
-  | 'agent.receipt'
-  | 'agent.status'
-  | 'agent.session'
-  | 'agent.options'
-  | 'agent.inbox'
-  | 'agent.events'
-  | 'agent.result'
-  | 'agent.artifacts'
-  | 'agent.usage'
-  | 'agent.transcript';
+export const PACKAGE_AGENT_RUNTIME_METHODS = [
+  'create',
+  'resume',
+  'get',
+  'list',
+  'roots',
+  'run',
+  'stop',
+  'agent.followup',
+  'agent.steer',
+  'agent.cancel',
+  'agent.whenIdle',
+  'agent.retract',
+  'agent.receipt',
+  'agent.status',
+  'agent.session',
+  'agent.options',
+  'agent.inbox',
+  'agent.events',
+  'agent.result',
+  'agent.artifacts',
+  'agent.usage',
+  'agent.transcript',
+] as const;
+
+export type PackageAgentRuntimeMethod = (typeof PACKAGE_AGENT_RUNTIME_METHODS)[number];
 
 export interface PackageAgentDescriptor {
   readonly id: string;

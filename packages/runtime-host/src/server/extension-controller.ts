@@ -21,6 +21,7 @@ import {
   type ExtensionPackageContractProjection,
   type ExtensionUiSnapshotInput,
   type ExtensionUiSnapshotResult,
+  EXTENSION_UI_AGENT_RPC_METHOD,
   type ExtensionUiRpcInvokeInput,
   type ExtensionUiRpcInvokeResult,
   type ExtensionUiStateMutateInput,
@@ -405,17 +406,20 @@ export class HostExtensionController {
     if (this.#draining) return uiRpcFailure('host_draining', 'Runtime Host is draining');
     if (!this.uiPackages)
       return uiRpcFailure('operation_unavailable', 'UI Host services are unavailable');
-    const denied = this.#authorizeUiRpc(input);
+    const agentRequest = input.method === EXTENSION_UI_AGENT_RPC_METHOD;
+    const denied = agentRequest ? this.#authorizeUiAgent(input) : this.#authorizeUiRpc(input);
     if (denied) return uiRpcFailure(denied.code, denied.message);
     try {
       const installed = await this.uiPackages.loadUi(input.extensionId);
       const result: ExtensionUiRpcInvokeResult = {
-        value: (await this.#uiPackageService.invoke(
-          installed,
-          input.method,
-          input.args,
-          new AbortController().signal,
-        )) as ExtensionUiRpcInvokeResult['value'],
+        value: (await (agentRequest
+          ? this.#uiPackageService.invokeAgent(installed, input.args, new AbortController().signal)
+          : this.#uiPackageService.invoke(
+              installed,
+              input.method,
+              input.args,
+              new AbortController().signal,
+            ))) as ExtensionUiRpcInvokeResult['value'],
       };
       return { ok: true, result };
     } catch (error) {
@@ -485,6 +489,40 @@ export class HostExtensionController {
       : {
           code: 'invalid_request',
           message: 'UI Host method is not declared by the active Fiber',
+        };
+  }
+
+  #authorizeUiAgent(
+    input: ExtensionUiRpcInvokeInput,
+  ): { code: 'not_found' | 'invalid_request'; message: string } | undefined {
+    const entry = this.#readEntryState(input.entryId);
+    if (!entry) return { code: 'not_found', message: 'UI Extension entry is not installed' };
+    const current = this.runtime.inspect(input.entryId).current;
+    if (
+      !entry.enabled ||
+      entry.scopeId !== input.scopeId ||
+      entry.extensionId !== input.extensionId ||
+      current?.generation !== input.generation
+    ) {
+      return {
+        code: 'invalid_request',
+        message: 'UI Extension bridge identity is stale or inactive',
+      };
+    }
+    const admitted = this.runtime
+      .inspectUi(input.scopeId)
+      .some(
+        (item) =>
+          item.entryId === input.entryId &&
+          item.extensionId === input.extensionId &&
+          item.generation === input.generation &&
+          item.sessionAccess,
+      );
+    return admitted
+      ? undefined
+      : {
+          code: 'invalid_request',
+          message: 'UI Extension did not declare Session access permission',
         };
   }
 
