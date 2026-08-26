@@ -1,15 +1,30 @@
 import type { MakaToolContext } from '@maka/runtime/tool-runtime';
 import { join } from 'node:path';
-import { InProcessPackageActivation } from './in-process-package-runtime.js';
+import {
+  InProcessPackageActivation,
+  type PackageAgentRuntime,
+} from './in-process-package-runtime.js';
 import type { InstalledToolPackage, ToolPackageManifest } from './plugin-runtime-manifest.js';
 import type { InstalledUiPackage } from './plugin-ui-manifest.js';
 
 /** Executes a trusted UI package's private Host methods in process. */
 export class UiPackageService {
+  #agents: PackageAgentRuntime | undefined;
+
+  setAgentRuntime(runtime: PackageAgentRuntime): void {
+    this.#agents = runtime;
+  }
+
   async healthCheck(installed: InstalledUiPackage): Promise<void> {
     if (!installed.manifest.host) return;
     const runtimePackage = asRuntimePackage(installed);
-    const activation = new InProcessPackageActivation(runtimePackage);
+    const activation = new InProcessPackageActivation(
+      runtimePackage,
+      undefined,
+      undefined,
+      undefined,
+      this.#agents,
+    );
     try {
       await activation.healthCheck(runtimePackage.manifest.tools.map(({ handler }) => handler));
     } finally {
@@ -25,7 +40,13 @@ export class UiPackageService {
   ): Promise<unknown> {
     const declaration = installed.manifest.host?.methods.find(({ name }) => name === methodName);
     if (!declaration) throw new Error(`UI Host method is not declared: ${methodName}`);
-    const activation = new InProcessPackageActivation(asRuntimePackage(installed));
+    const activation = new InProcessPackageActivation(
+      asRuntimePackage(installed),
+      undefined,
+      undefined,
+      undefined,
+      this.#agents,
+    );
     const context: MakaToolContext = {
       sessionId: `ui:${installed.extensionId}`,
       turnId: `ui-host:${methodName}`,

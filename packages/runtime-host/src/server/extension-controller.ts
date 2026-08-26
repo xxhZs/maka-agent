@@ -48,6 +48,7 @@ import { HostExtensionUiStateStore } from './extension-ui-state-store.js';
 import { UiPackageService } from './ui-package-service.js';
 import type { PluginPackageStore } from './plugin-package-store.js';
 import { validateExtensionConfiguration } from './extension-package-manifest.js';
+import type { PackageAgentRuntime } from './in-process-package-runtime.js';
 
 type MutationFailureCode =
   | 'host_draining'
@@ -88,6 +89,7 @@ export class HostExtensionController {
       this.#persistedComposition = composition;
     },
   );
+  readonly #uiPackageService = new UiPackageService();
   #mutationTail: Promise<void> = Promise.resolve();
   #recovered = false;
   #draining = false;
@@ -117,6 +119,11 @@ export class HostExtensionController {
 
   resolveTool(scopeId: string, name: string): MakaTool | undefined {
     return this.runtime.resolveTools(scopeId, []).find((tool) => tool.name === name);
+  }
+
+  setAgentRuntime(runtime: PackageAgentRuntime): void {
+    this.loader.setAgentRuntime?.(runtime);
+    this.#uiPackageService.setAgentRuntime(runtime);
   }
 
   emitEvent(scopeId: string, event: string, payload: unknown, context: MakaToolContext) {
@@ -403,7 +410,7 @@ export class HostExtensionController {
     try {
       const installed = await this.uiPackages.loadUi(input.extensionId);
       const result: ExtensionUiRpcInvokeResult = {
-        value: (await new UiPackageService().invoke(
+        value: (await this.#uiPackageService.invoke(
           installed,
           input.method,
           input.args,

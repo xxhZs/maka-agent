@@ -272,6 +272,108 @@ test('trusted Tool activation shares in-process state, host network, and cancell
   }
 });
 
+test('Host Agent Runtime is injected independently from Extension contributions', async () => {
+  const root = await mkdtemp(join(tmpdir(), 'maka-tool-agent-runtime-'));
+  const source = join(root, 'source');
+  const store = new PluginPackageStore(join(root, 'control'));
+  try {
+    await createAgentRuntimePackage(source);
+    const sealed = await store.install(source);
+    const installed = await store.loadTool(sealed.extensionId);
+    const calls: unknown[] = [];
+    const activation = new InProcessPackageActivation(
+      installed,
+      Object.freeze({}),
+      undefined,
+      undefined,
+      {
+        invoke: async (method, input, context) => {
+          calls.push({ kind: method, input, extensionId: context.callerExtensionId });
+          if (method === 'run') {
+            return { sessionId: 'agent-session', turnId: 'agent-turn', runId: 'agent-run' };
+          }
+          if (method === 'create' || method === 'resume' || method === 'get') {
+            return {
+              id: 'owned-agent',
+              sessionId: 'owned-agent',
+              ownerExtensionId: context.callerExtensionId,
+              root: true,
+            };
+          }
+          if (method === 'list' || method === 'roots') return [{ id: 'owned-agent' }];
+          if (method === 'stop') return { status: 'cancelled' };
+          return { method };
+        },
+        observe: () => () => undefined,
+      },
+    );
+    try {
+      const tool = activation.tools().find(({ name }) => name === 'AgentControl');
+      assert.ok(tool);
+      assert.deepEqual(await tool.impl({ action: 'run' }, invocationContext(root)), {
+        sessionId: 'agent-session',
+        turnId: 'agent-turn',
+        runId: 'agent-run',
+      });
+      assert.deepEqual(await tool.impl({ action: 'stop' }, invocationContext(root)), {
+        status: 'cancelled',
+      });
+      const surface = activation.tools().find(({ name }) => name === 'AgentSurface');
+      assert.ok(surface);
+      assert.deepEqual(await surface.impl({}, invocationContext(root)), {
+        create: 'owned-agent',
+        resume: 'owned-agent',
+        get: 'owned-agent',
+        list: [{ id: 'owned-agent' }],
+        roots: [{ id: 'owned-agent' }],
+        initiator: 'fault-session',
+        requiredInitiator: 'fault-turn',
+      });
+      assert.deepEqual(calls.slice(0, 2), [
+        {
+          kind: 'run',
+          input: { prompt: 'Review the workspace', maxSteps: 4 },
+          extensionId: 'agent-runtime-test',
+        },
+        {
+          kind: 'stop',
+          input: { sessionId: 'agent-session', turnId: 'agent-turn', runId: 'agent-run' },
+          extensionId: 'agent-runtime-test',
+        },
+      ]);
+      assert.deepEqual(
+        calls.slice(2).map((call) => (call as { kind: string }).kind),
+        [
+          'create',
+          'resume',
+          'get',
+          'agent.followup',
+          'agent.steer',
+          'agent.cancel',
+          'agent.whenIdle',
+          'agent.retract',
+          'agent.receipt',
+          'agent.status',
+          'agent.session',
+          'agent.options',
+          'agent.inbox',
+          'agent.events',
+          'agent.result',
+          'agent.artifacts',
+          'agent.usage',
+          'agent.transcript',
+          'list',
+          'roots',
+        ],
+      );
+    } finally {
+      await activation.dispose();
+    }
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
 async function createPackage(root: string, label: string, temperature: number): Promise<string> {
   const source = join(root, `source-${label}`);
   await mkdir(join(source, 'dist'), { recursive: true });
@@ -366,6 +468,81 @@ export default {
   Counter: () => ({ value: ++calls }),
   Network: async () => ({ body: await (await fetch(${JSON.stringify(allowedUrl)})).text() }),
   Hang: async (_args, context) => await new Promise((_resolve, reject) => context.abortSignal.addEventListener('abort', () => reject(context.abortSignal.reason), { once: true })),
+};
+`,
+  );
+}
+
+async function createAgentRuntimePackage(source: string): Promise<void> {
+  await mkdir(join(source, 'dist'), { recursive: true });
+  await writeFile(
+    join(source, 'maka.extension.json'),
+    JSON.stringify({
+      schemaVersion: 1,
+      id: 'agent-runtime-test',
+      runtime: {
+        entry: 'dist/index.mjs',
+        tools: [
+          {
+            name: 'AgentControl',
+            description: 'Exercise the Host Agent Runtime',
+            handler: 'AgentControl',
+            inputSchema: { type: 'object', additionalProperties: true },
+            recoveryMode: 'never_auto_retry',
+          },
+          {
+            name: 'AgentSurface',
+            description: 'Exercise the complete Host Agent control surface',
+            handler: 'AgentSurface',
+            inputSchema: { type: 'object', additionalProperties: true },
+            recoveryMode: 'never_auto_retry',
+          },
+        ],
+        events: [],
+        listeners: [],
+        services: [],
+        timers: [],
+        permissions: { workspace: 'none', network: false },
+      },
+    }),
+  );
+  await writeFile(
+    join(source, 'dist', 'index.mjs'),
+    `export default {
+  AgentControl: (args, context) => args.action === 'run'
+    ? context.agents.run({ prompt: 'Review the workspace', maxSteps: 4 })
+    : context.agents.stop({ sessionId: 'agent-session', turnId: 'agent-turn', runId: 'agent-run' }),
+  AgentSurface: async (_args, context) => {
+    const created = await context.agents.create({ id: 'owned-agent', prompt: 'create' });
+    const resumed = await context.agents.resume({ sessionId: 'owned-agent' });
+    const found = await context.agents.get('owned-agent');
+    const stopObserving = created.observe(() => undefined);
+    await created.followup({ content: 'followup', messageId: 'followup-1' });
+    await created.steer('steer');
+    await created.cancel();
+    await created.whenIdle();
+    await created.retract({ retractId: 'retract-1' });
+    await created.receipt({ messageId: 'followup-1' });
+    await created.status();
+    await created.session();
+    await created.options();
+    await created.inbox();
+    await created.events();
+    await created.result();
+    await created.artifacts();
+    await created.usage();
+    await created.transcript();
+    stopObserving();
+    return {
+      create: created.id,
+      resume: resumed.id,
+      get: found?.id,
+      list: await context.agents.list(),
+      roots: await context.agents.roots(),
+      initiator: context.agents.currentInitiator().sessionId,
+      requiredInitiator: context.agents.requireInitiator().turnId,
+    };
+  },
 };
 `,
   );

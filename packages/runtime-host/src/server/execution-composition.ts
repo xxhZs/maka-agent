@@ -113,6 +113,7 @@ import {
 import { HostExecutionInspectCoordinator } from './execution-inspect-coordinator.js';
 import { HostExternalSessionCoordinator } from './external-session-coordinator.js';
 import { HostExtensionController } from './extension-controller.js';
+import { HostExtensionAgentRegistry } from './extension-agent-registry.js';
 import { HostExtensionTimerScheduler } from './extension-timer-scheduler.js';
 import {
   InstalledPluginPackageLoader,
@@ -576,12 +577,13 @@ export async function createExecutionRuntimeHostComposition(
     const canonicalPermissionOutcomes = new HostCanonicalPermissionOutcomeReader({
       store: stores.interactionStore,
     });
+    const transcriptReader = createSessionTranscriptReader({ stores, canonicalPermissionOutcomes });
     continuity = new SessionContinuityCoordinator(
       context.hostEpoch,
       (sessionId) => canonicalProjectionReader.read(sessionId),
       sessionAdmission,
       context.requestDrain,
-      createSessionTranscriptReader({ stores, canonicalPermissionOutcomes }),
+      transcriptReader,
       (sessionId) => sessionCatalogChanges.publish(sessionId),
     );
     const continuityCoordinator = continuity;
@@ -1221,6 +1223,22 @@ export async function createExecutionRuntimeHostComposition(
         );
       },
     });
+    extensionController.setAgentRuntime(
+      new HostExtensionAgentRegistry({
+        hostEpoch: context.hostEpoch,
+        sessions: sessionCatalog,
+        turns: interactiveTurns,
+        turnControl,
+        messages,
+        executions: coordinator,
+        stores,
+        artifacts,
+        artifactStore: openedArtifactStore,
+        usage: usagePricing,
+        transcript: transcriptReader,
+        acquireResidency: () => context.acquireResidency('hosted-execution'),
+      }),
+    );
     scheduledTasks = new HostScheduledTaskCoordinator({
       store: openedScheduledTaskStore,
       sessions: stores.sessionStore,

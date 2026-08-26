@@ -16,6 +16,7 @@ import {
   InProcessPackageActivation,
   type PackageContinuation,
   type PackageEventEmitter,
+  type PackageAgentRuntime,
   type PackageServiceCaller,
 } from './in-process-package-runtime.js';
 import type { InstalledEventPackage } from './plugin-hook-manifest.js';
@@ -30,6 +31,7 @@ export class PluginHookActivation {
     readonly configuration: Readonly<Record<string, string | number | boolean>> = Object.freeze({}),
     emitEvent?: PackageEventEmitter,
     callService?: PackageServiceCaller,
+    agents?: PackageAgentRuntime,
     runtime?: InProcessPackageActivation,
   ) {
     this.#runtime =
@@ -39,6 +41,7 @@ export class PluginHookActivation {
         configuration,
         emitEvent,
         callService,
+        agents,
       );
     this.#ownsRuntime = runtime === undefined;
   }

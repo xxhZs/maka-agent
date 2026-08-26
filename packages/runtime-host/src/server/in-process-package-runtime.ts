@@ -33,6 +33,101 @@ export type PackageServiceCaller = (
   context: PackageInvocationContext & { readonly callerExtensionId: string },
 ) => Promise<unknown>;
 
+export interface PackageAgentRunInput {
+  readonly prompt: string;
+  readonly cwd?: string;
+  readonly name?: string;
+  readonly maxSteps?: number;
+}
+
+export interface PackageAgentStopInput {
+  readonly sessionId: string;
+  readonly turnId: string;
+  readonly runId: string;
+}
+
+export type PackageAgentRuntimeMethod =
+  | 'create'
+  | 'resume'
+  | 'get'
+  | 'list'
+  | 'roots'
+  | 'run'
+  | 'stop'
+  | 'agent.followup'
+  | 'agent.steer'
+  | 'agent.cancel'
+  | 'agent.whenIdle'
+  | 'agent.retract'
+  | 'agent.receipt'
+  | 'agent.status'
+  | 'agent.session'
+  | 'agent.options'
+  | 'agent.inbox'
+  | 'agent.events'
+  | 'agent.result'
+  | 'agent.artifacts'
+  | 'agent.usage'
+  | 'agent.transcript';
+
+export interface PackageAgentDescriptor {
+  readonly id: string;
+  readonly sessionId: string;
+  readonly ownerExtensionId: string;
+  readonly root: boolean;
+  readonly turn?: {
+    readonly turnId: string;
+    readonly runId: string;
+    readonly status: string;
+  };
+}
+
+export type PackageAgentObservation =
+  | { readonly kind: 'execution_changed'; readonly agentId: string; readonly execution: unknown }
+  | { readonly kind: 'transcript_changed'; readonly agentId: string }
+  | {
+      readonly kind: 'runtime_events';
+      readonly agentId: string;
+      readonly runId: string;
+      readonly events: readonly unknown[];
+    };
+
+export interface PackageAgentRuntime {
+  invoke(
+    method: PackageAgentRuntimeMethod,
+    input: unknown,
+    context: PackageInvocationContext & { readonly callerExtensionId: string },
+  ): Promise<unknown>;
+  observe(
+    input: { readonly agentId: string },
+    listener: (observation: PackageAgentObservation) => void,
+    context: PackageInvocationContext & { readonly callerExtensionId: string },
+  ): () => void;
+}
+
+export interface PackageAgentHandle {
+  readonly id: string;
+  readonly sessionId: string;
+  readonly ownerExtensionId: string;
+  readonly root: boolean;
+  followup(input: unknown): Promise<unknown>;
+  steer(input: unknown): Promise<unknown>;
+  cancel(input?: unknown): Promise<unknown>;
+  whenIdle(input?: unknown): Promise<unknown>;
+  retract(input?: unknown): Promise<unknown>;
+  receipt(input: unknown): Promise<unknown>;
+  status(): Promise<unknown>;
+  session(): Promise<unknown>;
+  options(): Promise<unknown>;
+  inbox(): Promise<unknown>;
+  events(input?: unknown): Promise<unknown>;
+  result(input?: unknown): Promise<unknown>;
+  artifacts(input?: unknown): Promise<unknown>;
+  usage(input?: unknown): Promise<unknown>;
+  transcript(input?: unknown): Promise<unknown>;
+  observe(listener: (observation: PackageAgentObservation) => void): () => void;
+}
+
 export type PackageContinuation = (value?: unknown) => unknown | Promise<unknown>;
 
 type PackageHandler = (
@@ -42,6 +137,20 @@ type PackageHandler = (
       readonly configuration: Readonly<Record<string, ExtensionConfigurationScalar>>;
       readonly emitEvent: (event: string, payload: unknown) => Promise<unknown>;
       readonly callService: (service: string, method: string, input: unknown) => Promise<unknown>;
+      /** Host-owned Agent Runtime; independent from Tool/UI/Hook contributions. */
+      readonly agents: Readonly<{
+        create(input: unknown): Promise<PackageAgentHandle>;
+        resume(input: unknown): Promise<PackageAgentHandle>;
+        get(id: string): Promise<PackageAgentHandle | undefined>;
+        list(): Promise<unknown>;
+        roots(): Promise<unknown>;
+        currentInitiator(): Readonly<PackageInvocationContext>;
+        requireInitiator(): Readonly<PackageInvocationContext>;
+        /** Compatibility shortcut for create({ prompt, ... }). */
+        run(input: PackageAgentRunInput): Promise<unknown>;
+        /** Compatibility shortcut for cancelling one exact Maka Run. */
+        stop(input: PackageAgentStopInput): Promise<unknown>;
+      }>;
     }
   >,
   next?: PackageContinuation,
@@ -73,6 +182,7 @@ export class InProcessPackageError extends Error {
  */
 export class InProcessPackageActivation {
   readonly #invocations = new Set<Promise<unknown>>();
+  readonly #agentObservers = new Set<() => void>();
   #handlersTask: Promise<Readonly<Record<string, PackageHandler>>> | undefined;
 
   constructor(
@@ -82,6 +192,7 @@ export class InProcessPackageActivation {
     ),
     private readonly emitEvent?: PackageEventEmitter,
     private readonly callService?: PackageServiceCaller,
+    private readonly agents?: PackageAgentRuntime,
   ) {}
 
   tools(): readonly MakaTool[] {
@@ -150,6 +261,8 @@ export class InProcessPackageActivation {
     // Registries stop exposing this activation before disposal. Captured Turn
     // snapshots intentionally retain their bound handlers and may still enter
     // after a Binding update; those live references are the generation lease.
+    for (const dispose of this.#agentObservers) dispose();
+    this.#agentObservers.clear();
     await Promise.allSettled([...this.#invocations]);
   }
 
@@ -160,9 +273,85 @@ export class InProcessPackageActivation {
     next?: PackageContinuation,
   ): Promise<unknown> {
     const handler = requireHandler(await this.#handlers(), handlerName);
+    const agentContext = {
+      ...context,
+      callerExtensionId: this.installedPackage.extensionId,
+    };
+    const callAgentRuntime = (
+      method: PackageAgentRuntimeMethod,
+      input: unknown,
+    ): Promise<unknown> => {
+      if (!this.agents) throw new Error('Maka Agent Runtime is unavailable');
+      return this.agents.invoke(method, input, agentContext);
+    };
+    const handle = (descriptor: PackageAgentDescriptor): PackageAgentHandle => {
+      const agentInput = (input: unknown): Record<string, unknown> => ({
+        ...(input && typeof input === 'object' && !Array.isArray(input)
+          ? (input as Record<string, unknown>)
+          : input === undefined
+            ? {}
+            : { content: input }),
+        agentId: descriptor.id,
+      });
+      return Object.freeze({
+        id: descriptor.id,
+        sessionId: descriptor.sessionId,
+        ownerExtensionId: descriptor.ownerExtensionId,
+        root: descriptor.root,
+        followup: (input: unknown) => callAgentRuntime('agent.followup', agentInput(input)),
+        steer: (input: unknown) => callAgentRuntime('agent.steer', agentInput(input)),
+        cancel: (input?: unknown) => callAgentRuntime('agent.cancel', agentInput(input)),
+        whenIdle: (input?: unknown) => callAgentRuntime('agent.whenIdle', agentInput(input)),
+        retract: (input?: unknown) => callAgentRuntime('agent.retract', agentInput(input)),
+        receipt: (input: unknown) => callAgentRuntime('agent.receipt', agentInput(input)),
+        status: () => callAgentRuntime('agent.status', { agentId: descriptor.id }),
+        session: () => callAgentRuntime('agent.session', { agentId: descriptor.id }),
+        options: () => callAgentRuntime('agent.options', { agentId: descriptor.id }),
+        inbox: () => callAgentRuntime('agent.inbox', { agentId: descriptor.id }),
+        events: (input?: unknown) => callAgentRuntime('agent.events', agentInput(input)),
+        result: (input?: unknown) => callAgentRuntime('agent.result', agentInput(input)),
+        artifacts: (input?: unknown) => callAgentRuntime('agent.artifacts', agentInput(input)),
+        usage: (input?: unknown) => callAgentRuntime('agent.usage', agentInput(input)),
+        transcript: (input?: unknown) => callAgentRuntime('agent.transcript', agentInput(input)),
+        observe: (listener: (observation: PackageAgentObservation) => void) => {
+          if (typeof listener !== 'function')
+            throw new TypeError('Agent observer must be a function');
+          if (!this.agents) throw new Error('Maka Agent Runtime is unavailable');
+          const dispose = this.agents.observe({ agentId: descriptor.id }, listener, agentContext);
+          let active = true;
+          const trackedDispose = () => {
+            if (!active) return;
+            active = false;
+            this.#agentObservers.delete(trackedDispose);
+            dispose();
+          };
+          this.#agentObservers.add(trackedDispose);
+          return trackedDispose;
+        },
+      });
+    };
+    const descriptor = async (method: 'create' | 'resume', input: unknown) =>
+      handle((await callAgentRuntime(method, input)) as PackageAgentDescriptor);
+    const agents = Object.freeze({
+      create: (input: unknown) => descriptor('create', input),
+      resume: (input: unknown) => descriptor('resume', input),
+      get: async (id: string) => {
+        const value = await callAgentRuntime('get', { agentId: id });
+        return value === undefined || value === null
+          ? undefined
+          : handle(value as PackageAgentDescriptor);
+      },
+      list: () => callAgentRuntime('list', {}),
+      roots: () => callAgentRuntime('roots', {}),
+      currentInitiator: () => Object.freeze({ ...context }),
+      requireInitiator: () => Object.freeze({ ...context }),
+      run: (input: PackageAgentRunInput) => callAgentRuntime('run', input),
+      stop: (input: PackageAgentStopInput) => callAgentRuntime('stop', input),
+    });
     const runtimeContext = Object.freeze({
       ...context,
       configuration: this.configuration,
+      agents,
       emitEvent: (event: string, payload: unknown) => {
         if (!this.emitEvent) throw new Error('Extension Event emission is unavailable');
         return this.emitEvent(event, payload, context);

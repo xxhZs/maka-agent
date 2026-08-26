@@ -14,6 +14,7 @@ import type {
 import type { ExtensionEventInvocationContext } from '@maka/runtime/extension-event-contributions';
 import type { ExtensionServiceInvocationContext } from '@maka/runtime/extension-service-contributions';
 import type {
+  PackageAgentRuntime,
   PackageInvocationContext,
   PackageServiceCaller,
 } from './in-process-package-runtime.js';
@@ -76,6 +77,7 @@ export interface HostTrustedToolExtensionLoader {
   setUiStatePublisher?(
     publisher: (extensionId: string, key: string, value: unknown) => Promise<void>,
   ): void;
+  setAgentRuntime?(runtime: PackageAgentRuntime): void;
 }
 
 /**
@@ -184,6 +186,7 @@ export class InstalledPluginPackageLoader implements HostTrustedToolExtensionLoa
   };
   #publishUiState: (extensionId: string, key: string, value: unknown) => Promise<void> = async () =>
     undefined;
+  #agents: PackageAgentRuntime | undefined;
 
   constructor(
     private readonly statics: StaticTrustedToolExtensionLoader,
@@ -223,6 +226,10 @@ export class InstalledPluginPackageLoader implements HostTrustedToolExtensionLoa
     publisher: (extensionId: string, key: string, value: unknown) => Promise<void>,
   ): void {
     this.#publishUiState = publisher;
+  }
+
+  setAgentRuntime(runtime: PackageAgentRuntime): void {
+    this.#agents = runtime;
   }
 
   async list(): Promise<readonly TrustedExtensionProjection[]> {
@@ -268,6 +275,7 @@ export class InstalledPluginPackageLoader implements HostTrustedToolExtensionLoa
       emitEvent: (...args) => this.#emitEvent(...args),
       callService: (...args) => this.#callService(...args),
       publishUiState: (...args) => this.#publishUiState(...args),
+      agents: this.#agents,
     });
   }
 
@@ -505,6 +513,7 @@ async function combinedPackageInput(input: {
     context: ExtensionServiceInvocationContext,
   ) => Promise<unknown>;
   readonly publishUiState: (extensionId: string, key: string, value: unknown) => Promise<void>;
+  readonly agents?: PackageAgentRuntime;
 }): Promise<HostPreparedPluginPackageInput> {
   const installed = input.tool ?? input.ui?.installed ?? input.event;
   if (!installed) throw new HostExtensionLoaderError('not_found', 'Extension package is missing');
@@ -590,7 +599,13 @@ async function combinedPackageInput(input: {
         });
       };
       const toolActivation = input.tool
-        ? new InProcessPackageActivation(input.tool, configuration, emitEvent, callService)
+        ? new InProcessPackageActivation(
+            input.tool,
+            configuration,
+            emitEvent,
+            callService,
+            input.agents,
+          )
         : undefined;
       const eventActivation = input.event
         ? new PluginHookActivation(
@@ -598,6 +613,7 @@ async function combinedPackageInput(input: {
             configuration,
             emitEvent,
             callService,
+            input.agents,
             toolActivation,
           )
         : undefined;
