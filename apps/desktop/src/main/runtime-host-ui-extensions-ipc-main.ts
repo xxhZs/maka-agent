@@ -94,14 +94,6 @@ export function registerRuntimeHostUiExtensionsIpc(input: {
     return { ok: true as const };
   });
 
-  input.ipcMain.handle('ui-extensions:reload', async (_event, entryId: string) => {
-    const result = await input.client.request('extension.composition.mutate', {
-      kind: 'reload',
-      entryId,
-    });
-    return { ok: true as const, entry: result.entry };
-  });
-
   input.ipcMain.handle('ui-extensions:remove', async (_event, extensionId: string) => {
     const catalog = await input.client.request('extension.composition.query', {});
     for (const entry of catalog.entries.filter((item) => item.extensionId === extensionId)) {
@@ -159,7 +151,6 @@ async function listUiExtensions(client: DesktopRuntimeHostClient) {
         timerContributionIds: extension.timerContributionIds ?? [],
         dependencies: contract?.dependencies ?? [],
         configuration: contract?.configuration ?? { properties: {}, required: [] },
-        contributions: contract?.contributions ?? [],
         entries,
         active: entries.some((item) => item.status === 'active'),
         enabled: entries.some((item) => item.enabled),

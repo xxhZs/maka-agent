@@ -1,4 +1,4 @@
-import { createContext, useContext, useEffect, useRef, type ReactNode } from 'react';
+import { useEffect, useRef } from 'react';
 import { countDiffLineStats } from '@maka/core/unified-diff';
 import { isInFlightToolStatus } from '@maka/core/tool-result-status';
 import { type ToolResultContent } from '@maka/core/events';
@@ -57,20 +57,6 @@ import {
 import { getToolActivityCopy } from './tool-activity/copy.js';
 import { dotForStatus, type StatusSemantic } from './status-vocabulary.js';
 
-export type ToolResultContributionRenderer = (item: ToolActivityItem) => ReactNode | undefined;
-const ToolResultContributionContext = createContext<ToolResultContributionRenderer | undefined>(undefined);
-
-export function ToolResultContributionProvider(props: {
-  readonly render?: ToolResultContributionRenderer;
-  readonly children: ReactNode;
-}) {
-  return (
-    <ToolResultContributionContext.Provider value={props.render}>
-      {props.children}
-    </ToolResultContributionContext.Provider>
-  );
-}
-
 /** Friendly card for a `load_tools` result; falls back to JSON on unexpected shapes. */
 function LoadToolResultPreview(props: { args: unknown; value: unknown }) {
   const locale = useUiLocale();
@@ -100,9 +86,6 @@ export function ToolCallDetail({
   item: ToolActivityItem;
 }) {
   const locale = useUiLocale();
-  const contributionRenderer = useContext(ToolResultContributionContext);
-  const contributed = contributionRenderer?.(item);
-  if (contributed !== undefined && contributed !== null) return contributed;
   const cancelled = isCancelledToolResult(item.result);
   const sandboxBlocked = isSandboxDeniedTool(item);
   // Cancel is not a failure; stale errored+cancelled must not paint as failed.

@@ -51,7 +51,7 @@ import { UsageSettingsPage } from './usage-settings-page';
 import { WebSearchSettingsPage } from './web-search-settings-page';
 import type { UiLocaleUpdateGate } from './ui-locale-update-gate';
 import { getSettingsSharedCopy } from '../locales/settings-shared-copy.js';
-import { UiExtensionSettingsPages, UiExtensionSlot } from '../ui-extension-host.js';
+import { UiExtensionSlot } from '../ui-extension-host.js';
 
 const NARROW_SETTINGS_QUERY = '(max-width: 760px)';
 
@@ -346,7 +346,6 @@ export function SettingsSurface(props: {
               content={(
                 <LayoutContent padding={6}>
                   <UiExtensionSlot name="settings.content" />
-                  <UiExtensionSettingsPages />
                   {loading ? (
                     <SettingsSkeleton />
                   ) : (

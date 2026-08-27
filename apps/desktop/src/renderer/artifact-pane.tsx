@@ -58,7 +58,7 @@ import {
 } from '@maka/ui';
 import { EmptyState as AstryxEmptyState } from '@astryxdesign/core';
 import { ArtifactPreview } from './artifact-preview';
-import { UiExtensionPoint, UiExtensionSlot, useUiExtensionPoints } from './ui-extension-host';
+import { UiExtensionSlot } from './ui-extension-host';
 import { nextArtifactListAction } from './artifact-list-keyboard';
 import { filterUserVisibleArtifacts } from './artifact-visibility';
 import { openPathFailureCopy } from './open-path';
@@ -90,11 +90,6 @@ export function ArtifactPane(props: {
   const [pendingArtifactListRetry, setPendingArtifactListRetry] = useState(false);
   const [artifactActionBusy, setArtifactActionBusy] = useState(false);
   const [moreMenuOpen, setMoreMenuOpen] = useState(false);
-  const artifactRendererContributions = useUiExtensionPoints('artifact.renderer');
-  const artifactRenderers = useMemo(
-    () => artifactRendererContributions.filter(({ hostState }) => hostState === true),
-    [artifactRendererContributions],
-  );
   const artifactListRequestSeqRef = useRef(0);
   const artifactPaneMountedRef = useMountedRef();
   const artifactPaneSessionIdRef = useRef<string | undefined>(sessionId);
@@ -197,11 +192,6 @@ export function ArtifactPane(props: {
       : null,
     [activeRecords, view],
   );
-  const artifactRendererNames = previewRecord
-    ? [`artifact.renderer.${previewRecord.kind}`, 'artifact.renderer'].filter((name) =>
-        artifactRenderers.some(({ slot }) => slot === name),
-      )
-    : [];
   const listRef = useRef<HTMLUListElement>(null);
   const previewRef = useRef<HTMLDivElement>(null);
   const activeListError = listError && listError.sessionId === sessionId ? listError.message : null;
@@ -541,42 +531,15 @@ export function ArtifactPane(props: {
             aria-label={copy.pane.previewNamed(previewRecord.name)}
             tabIndex={-1}
           >
-            <UiExtensionSlot
-              name="artifact.preview"
-              context={{
-                kind: 'artifact.preview',
-                sessionId,
-                artifactId: previewRecord.id,
-                artifactKind: previewRecord.kind,
-                name: previewRecord.name,
-                sizeBytes: previewRecord.sizeBytes,
-                source: previewRecord.source ?? null,
-              }}
+            <UiExtensionSlot name="artifact.preview" />
+            <ArtifactPreview
+              key={previewRecord.id}
+              record={previewRecord}
+              onShowInFolder={() => void runArtifactAction(
+                `${previewRecord.id}:open`,
+                () => openInFinder(previewRecord.id),
+              )}
             />
-            {artifactRendererNames.length > 0 ? (
-              <UiExtensionPoint
-                names={artifactRendererNames}
-                context={{
-                  kind: 'artifact.renderer',
-                  sessionId,
-                  artifactId: previewRecord.id,
-                  artifactKind: previewRecord.kind,
-                  name: previewRecord.name,
-                  sizeBytes: previewRecord.sizeBytes,
-                  source: previewRecord.source ?? null,
-                }}
-                className="maka-ui-extension-point--artifact"
-              />
-            ) : (
-              <ArtifactPreview
-                key={previewRecord.id}
-                record={previewRecord}
-                onShowInFolder={() => void runArtifactAction(
-                  `${previewRecord.id}:open`,
-                  () => openInFinder(previewRecord.id),
-                )}
-              />
-            )}
           </div>
         </div>
       ) : null}

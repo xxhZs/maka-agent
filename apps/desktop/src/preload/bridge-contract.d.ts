@@ -327,24 +327,11 @@ export interface UiExtensionEntry {
     }>>;
     readonly required: readonly string[];
   };
-  readonly contributions: readonly {
-    readonly kind: 'tool' | 'ui' | 'hook' | 'event' | 'listener' | 'service' | 'timer';
-    readonly id: string;
-    readonly name?: string;
-    readonly description?: string;
-    readonly surface?: 'app.root' | 'app.overlay' | 'app.slot';
-    readonly slot?: string;
-    readonly slots?: readonly string[];
-    readonly event?: string;
-    readonly mode?: string;
-  }[];
   readonly entries: readonly {
     readonly entryId: string;
     readonly scopeId: string;
     readonly enabled: boolean;
-    readonly generation: number;
     readonly status: 'disabled' | 'active' | 'waiting' | 'failed';
-    readonly error: string | null;
   }[];
   readonly active: boolean;
   readonly enabled: boolean;
@@ -368,7 +355,6 @@ export interface MakaBridge {
     list(): Promise<readonly UiExtensionEntry[]>;
     importLocal(): Promise<{ ok: true; extensionId: string } | { ok: false; reason: 'cancelled' }>;
     setEnabled(extensionId: string, enabled: boolean): Promise<{ ok: true }>;
-    reload(entryId: string): Promise<{ ok: true; entry: UiExtensionEntry['entries'][number] | null }>;
     getConfiguration(entryId: string): Promise<{ configuration: Record<string, string | number | boolean> }>;
     configure(entryId: string, configuration: Record<string, string | number | boolean>): Promise<{ ok: true; configuration: Record<string, string | number | boolean> }>;
     export(extensionId: string): Promise<{ ok: true; path: string } | { ok: false; reason: 'cancelled' }>;

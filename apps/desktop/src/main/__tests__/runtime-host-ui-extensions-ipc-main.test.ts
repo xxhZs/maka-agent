@@ -91,13 +91,6 @@ test('user import previews, confirms, installs, and enables one trusted UI and E
       },
     });
     assert.equal((mutations[1]?.input as { scopeId?: string } | undefined)?.scopeId, 'profile');
-    const reload = handlers.get('ui-extensions:reload');
-    assert.ok(reload);
-    assert.deepEqual(await reload({} as never, 'desktop-entry'), { ok: true, entry: null });
-    assert.deepEqual(requests.at(-1), {
-      operation: 'extension.composition.mutate',
-      input: { kind: 'reload', entryId: 'desktop-entry' },
-    });
   } finally {
     await rm(root, { recursive: true, force: true });
   }
