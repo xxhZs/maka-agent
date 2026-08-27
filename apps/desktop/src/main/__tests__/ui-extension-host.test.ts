@@ -183,7 +183,6 @@ function item(
   slot?: string,
 ): ExtensionUiContributionProjection {
   return {
-    scopeId: 'desktop-ui',
     entryId: `entry-${id}`,
     extensionId: 'demo',
     generation: 1,

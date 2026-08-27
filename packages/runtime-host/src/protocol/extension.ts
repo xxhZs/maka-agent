@@ -149,7 +149,6 @@ export interface ExtensionUiSnapshotInput {
 }
 
 export interface ExtensionUiContributionProjection {
-  readonly scopeId: string;
   readonly entryId: string;
   readonly extensionId: string;
   readonly generation: number;
@@ -461,7 +460,6 @@ export function decodeExtensionConfigurationMutateInput(
 ): ExtensionConfigurationMutateInput {
   const input = requireExactRecord(value, 'extension configuration mutation input', [
     'entryId',
-    'scopeId',
     'configuration',
   ]);
   return {
@@ -1113,7 +1111,6 @@ function decodeUiContributionProjection(value: unknown): ExtensionUiContribution
     throw invalidProtocolFrame('Invalid extension UI Host methods');
   }
   return {
-    scopeId: decodeExtensionScopeId(item.scopeId, 'extension UI scopeId'),
     entryId: requireEntityId(item.entryId, 'extension entryId'),
     extensionId: decodeExtensionId(item.extensionId),
     generation: decodeGeneration(item.generation),
