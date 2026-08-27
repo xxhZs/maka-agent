@@ -192,6 +192,23 @@ export interface ExtensionUiStateQueryResult {
   readonly value: ExtensionUiStateValue | null;
 }
 
+export interface ExtensionUiStateEventsInput extends ExtensionUiStateQueryInput {
+  readonly afterSequence: number;
+  readonly waitMs: number;
+}
+
+export interface ExtensionUiStateEvent {
+  readonly sequence: number;
+  readonly kind: 'set' | 'delete';
+  readonly key: string;
+  readonly value?: ExtensionUiStateValue;
+}
+
+export interface ExtensionUiStateEventsResult {
+  readonly sequence: number;
+  readonly changes: readonly ExtensionUiStateEvent[];
+}
+
 export type ExtensionUiStateMutateInput = ExtensionUiStateQueryInput &
   ({ readonly kind: 'set'; readonly value: ExtensionUiStateValue } | { readonly kind: 'delete' });
 
@@ -328,6 +345,17 @@ export const EXTENSION_OPERATION_SPECS = {
     errors: MUTATION_ERRORS,
     decodeInput: decodeExtensionUiStateQueryInput,
     decodeOutput: decodeExtensionUiStateQueryResult,
+  }),
+  'extension.ui.state.events': defineOperation<
+    ExtensionUiStateEventsInput,
+    ExtensionUiStateEventsResult,
+    (typeof MUTATION_ERRORS)[number]
+  >({
+    mode: 'query',
+    availability: 'ready',
+    errors: MUTATION_ERRORS,
+    decodeInput: decodeExtensionUiStateEventsInput,
+    decodeOutput: decodeExtensionUiStateEventsResult,
   }),
   'extension.ui.state.mutate': defineOperation<
     ExtensionUiStateMutateInput,
@@ -481,6 +509,70 @@ export function decodeExtensionUiStateQueryResult(value: unknown): ExtensionUiSt
     value: decodeUiStateValue(result.value),
   };
   requireEncodedByteLimit(decoded, 'extension UI state query result', 72 * 1024);
+  return decoded;
+}
+
+export function decodeExtensionUiStateEventsInput(value: unknown): ExtensionUiStateEventsInput {
+  const input = requireExactRecord(value, 'extension UI state events input', [
+    'scopeId',
+    'entryId',
+    'extensionId',
+    'generation',
+    'key',
+    'afterSequence',
+    'waitMs',
+  ]);
+  if (!Number.isSafeInteger(input.afterSequence) || (input.afterSequence as number) < 0) {
+    throw invalidProtocolFrame('Invalid extension UI state event sequence');
+  }
+  if (
+    !Number.isSafeInteger(input.waitMs) ||
+    (input.waitMs as number) < 0 ||
+    (input.waitMs as number) > 25_000
+  ) {
+    throw invalidProtocolFrame('Invalid extension UI state event wait');
+  }
+  return {
+    ...decodeUiStateIdentity(input),
+    afterSequence: input.afterSequence as number,
+    waitMs: input.waitMs as number,
+  };
+}
+
+export function decodeExtensionUiStateEventsResult(value: unknown): ExtensionUiStateEventsResult {
+  const result = requireExactRecord(value, 'extension UI state events result', [
+    'sequence',
+    'changes',
+  ]);
+  if (
+    !Number.isSafeInteger(result.sequence) ||
+    (result.sequence as number) < 0 ||
+    !Array.isArray(result.changes) ||
+    result.changes.length > 256
+  ) {
+    throw invalidProtocolFrame('Invalid extension UI state events result');
+  }
+  const changes = result.changes.map((value) => {
+    const candidate = requireRecord(value, 'extension UI state event');
+    const fields =
+      candidate.kind === 'set' ? ['sequence', 'kind', 'key', 'value'] : ['sequence', 'kind', 'key'];
+    const event = requireExactRecord(candidate, 'extension UI state event', fields);
+    if (
+      (event.kind !== 'set' && event.kind !== 'delete') ||
+      !Number.isSafeInteger(event.sequence) ||
+      (event.sequence as number) <= 0
+    ) {
+      throw invalidProtocolFrame('Invalid extension UI state event');
+    }
+    return {
+      sequence: event.sequence as number,
+      kind: event.kind,
+      key: requireUtf8String(event.key, 'extension UI state event key', 128),
+      ...(event.kind === 'set' ? { value: decodeUiStateValue(event.value) } : {}),
+    } as ExtensionUiStateEvent;
+  });
+  const decoded = { sequence: result.sequence as number, changes };
+  requireEncodedByteLimit(decoded, 'extension UI state events result', 1024 * 1024);
   return decoded;
 }
 

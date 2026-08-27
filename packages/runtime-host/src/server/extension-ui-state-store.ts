@@ -6,6 +6,15 @@ const STATE_FILE_NAME = 'extension-ui-state-v2.json';
 const MAX_STATE_BYTES = 1024 * 1024;
 const MAX_VALUE_BYTES = 64 * 1024;
 const MAX_KEYS = 256;
+const MAX_EVENT_HISTORY = 256;
+const MAX_EVENT_WAIT_MS = 25_000;
+
+export interface ExtensionUiStateChange {
+  readonly sequence: number;
+  readonly kind: 'set' | 'delete';
+  readonly key: string;
+  readonly value?: ExtensionUiStateValue;
+}
 
 export type ExtensionUiStateValue =
   | null
@@ -24,6 +33,9 @@ interface PersistedState {
 export class HostExtensionUiStateStore {
   readonly path: string | undefined;
   readonly #memory = new Map<string, Map<string, ExtensionUiStateValue>>();
+  readonly #sequences = new Map<string, number>();
+  readonly #events = new Map<string, ExtensionUiStateChange[]>();
+  readonly #waiters = new Map<string, Set<() => void>>();
   #loaded = false;
   #tail: Promise<void> = Promise.resolve();
 
@@ -51,6 +63,7 @@ export class HostExtensionUiStateStore {
   ): Promise<void> {
     validateKey(key);
     validateValue(value);
+    let changed = false;
     await this.#mutate(async () => {
       let state = this.#memory.get(ownerKey(scopeId, entryId));
       if (!state) {
@@ -59,8 +72,11 @@ export class HostExtensionUiStateStore {
       }
       if (!state.has(key) && state.size >= MAX_KEYS)
         throw new Error('UI Extension state key limit exceeded');
+      const previous = state.get(key);
+      changed = !state.has(key) || JSON.stringify(previous) !== JSON.stringify(value);
       state.set(key, cloneValue(value));
     });
+    if (changed) this.#publish(scopeId, entryId, { kind: 'set', key, value: cloneValue(value) });
   }
 
   async delete(scopeId: string, entryId: string, key: string): Promise<boolean> {
@@ -72,13 +88,66 @@ export class HostExtensionUiStateStore {
       deleted = state?.delete(key) ?? false;
       if (state?.size === 0) this.#memory.delete(owner);
     });
+    if (deleted) this.#publish(scopeId, entryId, { kind: 'delete', key });
     return deleted;
+  }
+
+  async nextChanges(
+    scopeId: string,
+    entryId: string,
+    afterSequence: number,
+    waitMs = MAX_EVENT_WAIT_MS,
+  ): Promise<{ sequence: number; changes: readonly ExtensionUiStateChange[] }> {
+    await this.#load();
+    const owner = ownerKey(scopeId, entryId);
+    const read = () => {
+      const sequence = this.#sequences.get(owner) ?? 0;
+      const changes = (this.#events.get(owner) ?? []).filter(
+        (event) => event.sequence > afterSequence,
+      );
+      return { sequence, changes: Object.freeze(changes.map(cloneChange)) };
+    };
+    const immediate = read();
+    if (immediate.sequence > afterSequence || waitMs <= 0) return immediate;
+    await new Promise<void>((resolve) => {
+      const waiters = this.#waiters.get(owner) ?? new Set<() => void>();
+      let timer: ReturnType<typeof setTimeout>;
+      const finish = () => {
+        clearTimeout(timer);
+        waiters.delete(finish);
+        if (waiters.size === 0) this.#waiters.delete(owner);
+        resolve();
+      };
+      waiters.add(finish);
+      this.#waiters.set(owner, waiters);
+      timer = setTimeout(finish, Math.min(waitMs, MAX_EVENT_WAIT_MS));
+    });
+    return read();
   }
 
   async clear(scopeId: string, entryId: string): Promise<void> {
     await this.#mutate(async () => {
       this.#memory.delete(ownerKey(scopeId, entryId));
     });
+    const owner = ownerKey(scopeId, entryId);
+    this.#events.delete(owner);
+    this.#sequences.delete(owner);
+    for (const wake of this.#waiters.get(owner) ?? []) wake();
+  }
+
+  #publish(
+    scopeId: string,
+    entryId: string,
+    change: Omit<ExtensionUiStateChange, 'sequence'>,
+  ): void {
+    const owner = ownerKey(scopeId, entryId);
+    const sequence = (this.#sequences.get(owner) ?? 0) + 1;
+    this.#sequences.set(owner, sequence);
+    const events = this.#events.get(owner) ?? [];
+    events.push(Object.freeze({ sequence, ...change }));
+    if (events.length > MAX_EVENT_HISTORY) events.splice(0, events.length - MAX_EVENT_HISTORY);
+    this.#events.set(owner, events);
+    for (const wake of [...(this.#waiters.get(owner) ?? [])]) wake();
   }
 
   async #mutate(operation: () => Promise<void>): Promise<void> {
@@ -171,4 +240,15 @@ function validateValue(value: unknown): asserts value is ExtensionUiStateValue {
 
 function cloneValue<T extends ExtensionUiStateValue>(value: T): T {
   return JSON.parse(JSON.stringify(value)) as T;
+}
+
+function cloneChange(change: ExtensionUiStateChange): ExtensionUiStateChange {
+  return change.kind === 'set'
+    ? {
+        sequence: change.sequence,
+        kind: change.kind,
+        key: change.key,
+        value: cloneValue(change.value ?? null),
+      }
+    : { sequence: change.sequence, kind: change.kind, key: change.key };
 }

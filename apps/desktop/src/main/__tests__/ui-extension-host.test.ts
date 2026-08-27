@@ -113,6 +113,8 @@ describe('Desktop UI extension shell', () => {
     assert.match(bridged, /getState/);
     assert.match(bridged, /setState/);
     assert.match(bridged, /deleteState/);
+    assert.match(bridged, /subscribe/);
+    assert.match(bridged, /afterSequence/);
     assert.match(bridged, /invoke/);
     assert.match(bridged, /agent_invoke/);
     assert.match(bridged, /agents:agents/);

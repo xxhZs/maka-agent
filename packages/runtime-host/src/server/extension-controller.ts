@@ -27,6 +27,8 @@ import {
   type ExtensionUiRpcInvokeResult,
   type ExtensionUiStateMutateInput,
   type ExtensionUiStateMutateResult,
+  type ExtensionUiStateEventsInput,
+  type ExtensionUiStateEventsResult,
   type ExtensionUiStateQueryInput,
   type ExtensionUiStateQueryResult,
   type OperationOutcome,
@@ -78,6 +80,7 @@ export class HostExtensionController {
     'extension.configuration.mutate': (input) => this.#configurationMutate(input),
     'extension.ui.snapshot': (input) => this.#uiSnapshot(input),
     'extension.ui.state.query': (input) => this.#uiStateQuery(input),
+    'extension.ui.state.events': (input) => this.#uiStateEvents(input),
     'extension.ui.state.mutate': (input) => this.#uiStateMutate(input),
     'extension.ui.rpc.invoke': (input) => this.#uiRpcInvoke(input),
     'extension.package.install': (input) => this.#installPackage(input),
@@ -378,6 +381,28 @@ export class HostExtensionController {
       return { ok: true, result };
     } catch (error) {
       return uiStateFailure('persistence_failed', boundedErrorMessage(error));
+    }
+  }
+
+  async #uiStateEvents(
+    input: ExtensionUiStateEventsInput,
+  ): Promise<OperationOutcome<'extension.ui.state.events'>> {
+    const denied = this.#authorizeUiState(input);
+    if (denied) return uiStateEventsFailure(denied.code, denied.message);
+    try {
+      const result = await this.uiState.nextChanges(
+        input.scopeId,
+        input.entryId,
+        input.afterSequence,
+        input.waitMs,
+      );
+      const filtered: ExtensionUiStateEventsResult = {
+        sequence: result.sequence,
+        changes: result.changes.filter((change) => change.key === input.key),
+      };
+      return { ok: true, result: filtered };
+    } catch (error) {
+      return uiStateEventsFailure('persistence_failed', boundedErrorMessage(error));
     }
   }
 
@@ -1285,6 +1310,13 @@ function uiStateFailure(
   code: 'not_found' | 'invalid_request' | 'persistence_failed',
   message: string,
 ): OperationOutcome<'extension.ui.state.query'> {
+  return { ok: false, error: { code, message } };
+}
+
+function uiStateEventsFailure(
+  code: 'not_found' | 'invalid_request' | 'persistence_failed',
+  message: string,
+): OperationOutcome<'extension.ui.state.events'> {
   return { ok: false, error: { code, message } };
 }
 
