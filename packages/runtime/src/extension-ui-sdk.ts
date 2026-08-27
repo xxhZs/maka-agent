@@ -28,6 +28,13 @@ export interface MakaUiClientApi {
   notify(message: string): Promise<{ readonly accepted: true }>;
   confirm(message: string): Promise<{ readonly confirmed: boolean }>;
   writeClipboard(text: string): Promise<{ readonly written: true }>;
+  readArtifactText(): Promise<
+    { readonly ok: true; readonly text: string } | { readonly ok: false; readonly reason: string }
+  >;
+  readArtifactBinary(): Promise<
+    | { readonly ok: true; readonly base64: string; readonly mimeType: string }
+    | { readonly ok: false; readonly reason: string }
+  >;
 }
 
 export interface MakaUiSdk {

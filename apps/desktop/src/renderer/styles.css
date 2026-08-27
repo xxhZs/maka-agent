@@ -186,3 +186,30 @@
   border-radius: 10px;
   white-space: pre-wrap;
 }
+
+.maka-ui-extension-route-navigation {
+  display: grid;
+  gap: 4px;
+  padding: 4px 8px;
+}
+
+.maka-ui-extension-route-navigation button {
+  min-height: 34px;
+  padding: 6px 10px;
+  border: 0;
+  border-radius: 8px;
+  background: transparent;
+  color: inherit;
+  font: inherit;
+  text-align: start;
+}
+
+.maka-ui-extension-route-navigation button:hover {
+  background: var(--astryx-surface-hover, rgba(127, 127, 127, 0.1));
+}
+
+.maka-ui-extension-revision-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+}

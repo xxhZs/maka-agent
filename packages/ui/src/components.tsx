@@ -17,6 +17,7 @@ export { describeLoadToolResult, formatRedactedJson, formatToolIntent, loadToolD
 export {
   formatBytes,
   ToolCallDetail,
+  NativeToolCallDetail,
   ToolTrow,
   ToolResultContributionProvider,
   type ToolResultContributionRenderer,

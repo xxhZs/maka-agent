@@ -99,10 +99,15 @@ export function ToolCallDetail({
 }: {
   item: ToolActivityItem;
 }) {
-  const locale = useUiLocale();
   const contributionRenderer = useContext(ToolResultContributionContext);
   const contributed = contributionRenderer?.(item);
   if (contributed !== undefined && contributed !== null) return contributed;
+  return <NativeToolCallDetail item={item} />;
+}
+
+/** The trusted renderer used when no Extension claims the Tool result or its frame fails. */
+export function NativeToolCallDetail({ item }: { item: ToolActivityItem }) {
+  const locale = useUiLocale();
   const cancelled = isCancelledToolResult(item.result);
   const sandboxBlocked = isSandboxDeniedTool(item);
   // Cancel is not a failure; stale errored+cancelled must not paint as failed.

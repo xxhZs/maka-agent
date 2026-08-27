@@ -119,6 +119,28 @@ test('real Tool package installs, runs in process, updates, drains, and uninstal
       location: 'Shanghai',
     });
 
+    const rolledBack = await controller.handlers['extension.composition.mutate'](
+      { kind: 'rollback', entryId: 'weather-entry' },
+      connection,
+    );
+    assert.equal(rolledBack.ok, true, JSON.stringify(rolledBack));
+    assert.deepEqual(await invoke(runtime, workspace, 'rollback-v1', 'v1'), {
+      label: 'v1',
+      temperature: 21,
+      location: 'Shanghai',
+    });
+
+    const restoredV2 = await controller.handlers['extension.composition.mutate'](
+      { kind: 'rollback', entryId: 'weather-entry' },
+      connection,
+    );
+    assert.equal(restoredV2.ok, true, JSON.stringify(restoredV2));
+    assert.deepEqual(await invoke(runtime, workspace, 'rollback-v2', 'v2'), {
+      label: 'v2',
+      temperature: 27,
+      location: 'Shanghai',
+    });
+
     const retained = await controller.handlers['extension.package.uninstall'](
       { extensionId: 'weather' },
       connection,

@@ -98,6 +98,7 @@ import { McpPage } from './mcp-page';
 import { UiExtensionsPage } from './ui-extensions-page';
 import {
   UiExtensionSlot,
+  UiExtensionRouteNavigation,
   useUiConversationItems,
   useUiExtensionSessionScope,
   useUiToolResultContributionRenderer,
@@ -2800,7 +2801,12 @@ function AppShellContent({
             rowActions={sessionRowActions}
             projectActions={projectRowActions}
             headerExtension={<UiExtensionSlot name="sidebar.header" />}
-            mainExtension={<UiExtensionSlot name="sidebar.main" />}
+            mainExtension={(
+              <>
+                <UiExtensionRouteNavigation />
+                <UiExtensionSlot name="sidebar.main" />
+              </>
+            )}
             footerExtension={<UiExtensionSlot name="sidebar.footer" />}
           />
         }

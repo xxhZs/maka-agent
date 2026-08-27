@@ -351,12 +351,16 @@ export class HostExtensionController {
           ...(item.slot ? { slot: item.slot } : {}),
           slots: item.slots,
           priority: item.priority,
+          title: item.title,
+          description: item.description,
+          order: item.order,
           document: item.document,
           documentSha256: item.documentSha256,
           network: item.network,
           hostState: item.hostState,
           hostMethods: item.hostMethods,
           sessionAccess: item.sessionAccess,
+          clientCapabilities: item.clientCapabilities,
         }),
       );
     const digest = createHash('sha256').update(JSON.stringify(contributions)).digest('hex');
@@ -664,6 +668,8 @@ export class HostExtensionController {
           return this.#disable(input.entryId);
         case 'reload':
           return this.#reload(input.entryId);
+        case 'rollback':
+          return this.#rollback(input.entryId);
         case 'remove':
           return this.#remove(input.entryId);
       }
@@ -751,6 +757,40 @@ export class HostExtensionController {
       if (!dependency.ok) return dependency;
     }
     return this.#convergeMutation(entryId);
+  }
+
+  async #rollback(entryId: string): Promise<OperationOutcome<'extension.composition.mutate'>> {
+    const entry = this.#entries.get(entryId);
+    if (!entry) return mutationFailure('not_found', `Extension entry not found: ${entryId}`);
+    if (!this.loader.rollbackPackage) {
+      return mutationFailure(
+        'operation_conflict',
+        'Extension loader does not retain rollback revisions',
+      );
+    }
+    try {
+      await this.loader.rollbackPackage(entry.extensionId);
+    } catch (error) {
+      return mutationFailure('operation_conflict', boundedErrorMessage(error));
+    }
+    const targets = [...this.#entries.values()]
+      .filter((candidate) => candidate.extensionId === entry.extensionId && candidate.enabled)
+      .map(({ entryId }) => entryId);
+    const reloaded: string[] = [];
+    for (const targetEntryId of targets) {
+      const outcome = await this.#reload(targetEntryId);
+      if (outcome.ok) {
+        reloaded.push(targetEntryId);
+        continue;
+      }
+      await this.loader.rollbackPackage(entry.extensionId).catch(() => undefined);
+      for (const restoredEntryId of reloaded) await this.#reload(restoredEntryId);
+      return outcome;
+    }
+    return {
+      ok: true,
+      result: { entry: this.#projection(entryId) },
+    };
   }
 
   async #disable(entryId: string): Promise<OperationOutcome<'extension.composition.mutate'>> {

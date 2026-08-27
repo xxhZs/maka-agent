@@ -119,6 +119,9 @@ const uiContribution = z
       .max(32)
       .optional(),
     priority: z.number().int().min(-10_000).max(10_000),
+    title: z.string().min(1).max(128).optional(),
+    description: z.string().max(4096).optional(),
+    order: z.number().int().min(-10_000).max(10_000).optional(),
     document: z
       .string()
       .min(1)
@@ -250,6 +253,12 @@ const definePackageInput = z
           network: z.boolean(),
           hostState: z.boolean().default(false),
           sessionAccess: z.boolean().default(false),
+          clientCapabilities: z
+            .array(
+              z.enum(['navigation', 'notifications', 'dialogs', 'clipboardWrite', 'artifactRead']),
+            )
+            .max(5)
+            .default([]),
         }),
         host: z
           .object({
@@ -714,6 +723,9 @@ export class HostExtensionPackageManagementTools {
                 ...(item.slot ? { slot: item.slot } : {}),
                 ...(item.slots ? { slots: item.slots } : {}),
                 priority: item.priority,
+                ...(item.title ? { title: item.title } : {}),
+                ...(item.description !== undefined ? { description: item.description } : {}),
+                ...(item.order !== undefined ? { order: item.order } : {}),
                 document: `documents/${index + 1}.html`,
               })),
               ...(input.ui.host

@@ -369,6 +369,7 @@ export interface MakaBridge {
     importLocal(): Promise<{ ok: true; extensionId: string } | { ok: false; reason: 'cancelled' }>;
     setEnabled(extensionId: string, enabled: boolean): Promise<{ ok: true }>;
     reload(entryId: string): Promise<{ ok: true; entry: UiExtensionEntry['entries'][number] | null }>;
+    rollback(entryId: string): Promise<{ ok: true; entry: UiExtensionEntry['entries'][number] | null }>;
     getConfiguration(entryId: string): Promise<{ configuration: Record<string, string | number | boolean> }>;
     configure(entryId: string, configuration: Record<string, string | number | boolean>): Promise<{ ok: true; configuration: Record<string, string | number | boolean> }>;
     export(extensionId: string): Promise<{ ok: true; path: string } | { ok: false; reason: 'cancelled' }>;

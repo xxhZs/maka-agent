@@ -9,7 +9,7 @@ import {
   type ReactNode,
 } from 'react';
 import type { StoredMessage } from '@maka/core/session';
-import type { ToolActivityItem } from '@maka/ui';
+import { NativeToolCallDetail, useToast, type ToolActivityItem } from '@maka/ui';
 import {
   EXTENSION_UI_AGENT_RPC_METHOD,
   type ExtensionUiContributionProjection,
@@ -102,16 +102,21 @@ export function UiExtensionPoint({
   names,
   context = null,
   className,
+  fallback,
+  single = false,
 }: {
   names: readonly string[];
   context?: UiExtensionFrameContext;
   className?: string;
+  fallback?: ReactNode;
+  single?: boolean;
 }) {
   const host = useContext(UiExtensionSlotContext);
   const allowed = new Set(names);
-  const contributions = host.contributions.filter(
+  const matches = host.contributions.filter(
     (item) => item.surface === 'app.slot' && item.slot && allowed.has(item.slot),
   );
+  const contributions = fallback === undefined && !single ? matches : matches.slice(0, 1);
   if (contributions.length === 0) return null;
   return (
     <div className={['maka-ui-extension-point', className].filter(Boolean).join(' ')}>
@@ -124,6 +129,7 @@ export function UiExtensionPoint({
           contributions={host.contributions}
           ancestry={new Set([contributionKey(item)])}
           context={item.hostState === true ? context : null}
+          fallback={fallback}
         />
       ))}
     </div>
@@ -133,11 +139,49 @@ export function UiExtensionPoint({
 export function useUiExtensionPoints(prefix: string): readonly ExtensionUiContributionProjection[] {
   const host = useContext(UiExtensionSlotContext);
   return useMemo(
-    () => host.contributions.filter(
-      (item) => item.surface === 'app.slot' && item.slot?.startsWith(prefix),
-    ),
+    () => host.contributions
+      .filter((item) =>
+        item.surface === 'app.slot' &&
+        (prefix.endsWith('.') ? item.slot?.startsWith(prefix) : item.slot === prefix || item.slot?.startsWith(`${prefix}.`)),
+      )
+      .sort(compareNativeContribution),
     [host.contributions, prefix],
   );
+}
+
+export function UiExtensionRouteNavigation() {
+  const routes = uniqueUiExtensionPoints(useUiExtensionPoints('client.route.'));
+  if (routes.length === 0) return null;
+  return (
+    <nav className="maka-ui-extension-route-navigation" aria-label="插件页面">
+      {routes.map((route) => (
+        <button
+          key={`${route.scopeId}:${route.extensionId}:${route.id}`}
+          type="button"
+          title={route.description || undefined}
+          onClick={() => {
+            if (route.slot) window.sessionStorage.setItem('maka-ui-extension-route-v1', route.slot);
+            window.dispatchEvent(new CustomEvent('maka-ui-extension-navigate', {
+              detail: { route: route.slot },
+            }));
+          }}
+        >
+          {route.title ?? nativePointLabel(route.slot ?? route.id)}
+        </button>
+      ))}
+    </nav>
+  );
+}
+
+export function uniqueUiExtensionPoints(
+  contributions: readonly ExtensionUiContributionProjection[],
+): readonly ExtensionUiContributionProjection[] {
+  const seen = new Set<string>();
+  return contributions.filter(({ slot }) => {
+    if (!slot || seen.has(slot)) return false;
+    seen.add(slot);
+    return true;
+  });
 }
 
 export function UiExtensionSettingsPages() {
@@ -167,6 +211,7 @@ export function UiExtensionSettingsPages() {
         names={[selected]}
         context={{ kind: 'settings.page', page: selected }}
         className="maka-ui-extension-point--settings"
+        single
       />
     </section>
   );
@@ -200,6 +245,7 @@ export function useUiToolResultContributionRenderer():
             durationMs: item.durationMs,
           })}
           className="maka-ui-extension-point--tool-result"
+          fallback={<NativeToolCallDetail item={item} />}
         />
       );
     };
@@ -225,9 +271,12 @@ export function useUiConversationItems(
       current.push(message);
       byTurn.set(message.turnId, current);
     }
+    const lastTurnId = [...byTurn.keys()].at(-1);
     return [...byTurn].flatMap(([turnId, turnMessages]) => {
       const names = new Set<string>();
-      if (declared.has('conversation.node')) names.add('conversation.node');
+      // A generic node is one standalone live node at the conversation tail.
+      // Type-specific nodes act as renderers for matching persisted message types.
+      if (turnId === lastTurnId && declared.has('conversation.node')) names.add('conversation.node');
       for (const message of turnMessages) {
         const name = `conversation.node.${normalizePointName(message.type)}`;
         if (declared.has(name)) names.add(name);
@@ -246,6 +295,7 @@ export function useUiConversationItems(
               messages: turnMessages,
             })}
             className="maka-ui-extension-point--conversation-node"
+            single
           />
         ),
       }];
@@ -255,6 +305,24 @@ export function useUiConversationItems(
 
 function normalizePointName(value: string): string {
   return value.trim().toLowerCase().replace(/[^a-z0-9]+/gu, '-').replace(/^-+|-+$/gu, '') || 'unknown';
+}
+
+function compareNativeContribution(
+  left: ExtensionUiContributionProjection,
+  right: ExtensionUiContributionProjection,
+): number {
+  return (left.order ?? 0) - (right.order ?? 0) ||
+    right.priority - left.priority ||
+    (left.title ?? left.id).localeCompare(right.title ?? right.id);
+}
+
+export function nativePointLabel(point: string): string {
+  return point
+    .replace(/^(?:client\.route|settings\.page)\./u, '')
+    .split(/[.-]/u)
+    .filter(Boolean)
+    .map((part) => `${part.charAt(0).toUpperCase()}${part.slice(1)}`)
+    .join(' ');
 }
 
 function toFrameContext(value: unknown): UiExtensionFrameContext {
@@ -275,6 +343,7 @@ export function UiExtensionHost({
 }: {
   officialSnapshot: () => ReactNode;
 }) {
+  const toast = useToast();
   const [snapshot, setSnapshot] = useState<ExtensionUiSnapshotResult | null>(null);
   const [sessionSnapshot, setSessionSnapshot] = useState<ExtensionUiSnapshotResult | null>(null);
   const [activeSessionId, setActiveSessionId] = useState<string | undefined>();
@@ -306,6 +375,23 @@ export function UiExtensionHost({
       if (timer) clearTimeout(timer);
     };
   }, []);
+
+  useEffect(() => {
+    const receive = (event: Event) => {
+      const detail = (event as CustomEvent<{
+        message?: unknown;
+        resolve?: (confirmed: boolean) => void;
+      }>).detail;
+      if (typeof detail?.message !== 'string' || typeof detail.resolve !== 'function') return;
+      void toast.confirm({
+        title: detail.message,
+        confirmLabel: '确认',
+        cancelLabel: '取消',
+      }).then(detail.resolve, () => detail.resolve?.(false));
+    };
+    window.addEventListener('maka-ui-extension-confirm', receive);
+    return () => window.removeEventListener('maka-ui-extension-confirm', receive);
+  }, [toast]);
 
   useEffect(() => {
     let timer: ReturnType<typeof setTimeout> | undefined;
@@ -500,6 +586,7 @@ function SandboxedUiFrame({
   contributions,
   ancestry,
   context = null,
+  fallback,
 }: {
   contribution: ExtensionUiContributionProjection;
   layer: 'root' | 'overlay' | 'slot';
@@ -507,9 +594,11 @@ function SandboxedUiFrame({
   contributions: readonly ExtensionUiContributionProjection[];
   ancestry: ReadonlySet<string>;
   context?: UiExtensionFrameContext;
+  fallback?: ReactNode;
 }) {
   const frameRef = useRef<HTMLIFrameElement>(null);
   const [slotRects, setSlotRects] = useState<ReadonlyMap<string, UiSlotRect>>(new Map());
+  const [frameReady, setFrameReady] = useState(fallback === undefined);
   const token = useMemo(
     () => crypto.randomUUID(),
     [contribution.entryId, contribution.generation, contribution.id],
@@ -518,6 +607,7 @@ function SandboxedUiFrame({
     const receive = (event: MessageEvent) => {
       if (event.source !== frameRef.current?.contentWindow) return;
       if (isBridgeReady(event.data, token)) {
+        setFrameReady(true);
         postBridgeReady(frameRef.current, token, context);
         return;
       }
@@ -539,7 +629,7 @@ function SandboxedUiFrame({
         generation: contribution.generation,
       };
       const operation = request.kind === 'client'
-        ? runClientBridgeRequest(request.method, request.input)
+        ? runClientBridgeRequest(contribution, context, request.method, request.input)
         : isAgentBridgeRequest(request)
         ? runAgentBridgeRequest(contribution, identity, request)
         : request.kind === 'config'
@@ -585,7 +675,11 @@ function SandboxedUiFrame({
     );
   }, [context, token]);
   return (
-    <div className={`maka-ui-extension-frame-host maka-ui-extension-frame-host--${layer}`}>
+    <div
+      className={`maka-ui-extension-frame-host maka-ui-extension-frame-host--${layer}`}
+      data-extension-frame-ready={frameReady || undefined}
+    >
+      {!frameReady && fallback !== undefined ? fallback : null}
       <iframe
         ref={frameRef}
         className={`maka-ui-extension-frame maka-ui-extension-frame--${layer}`}
@@ -593,8 +687,10 @@ function SandboxedUiFrame({
         data-extension-id={contribution.extensionId}
         data-extension-generation={contribution.generation}
         data-contribution-id={contribution.id}
-        sandbox="allow-scripts allow-modals"
+        sandbox="allow-scripts"
         referrerPolicy="no-referrer"
+        hidden={!frameReady && fallback !== undefined}
+        onError={() => setFrameReady(false)}
         src={uiExtensionFrameUrl({
           scopeId: contribution.scopeId,
           entryId: contribution.entryId,
@@ -748,7 +844,15 @@ function decodeBridgeRequest(value: unknown, token: string): UiBridgeRequest | n
   if (request.kind === 'client') {
     if (
       typeof request.method !== 'string' ||
-      !['theme', 'navigate', 'notify', 'confirm', 'clipboard.write'].includes(request.method)
+      ![
+        'theme',
+        'navigate',
+        'notify',
+        'confirm',
+        'clipboard.write',
+        'artifact.readText',
+        'artifact.readBinary',
+      ].includes(request.method)
     ) return null;
     return { id: request.id, kind: request.kind, method: request.method, input: request.input };
   }
@@ -777,7 +881,12 @@ function decodeBridgeRequest(value: unknown, token: string): UiBridgeRequest | n
     : { id: request.id, kind: request.kind, key: request.key };
 }
 
-async function runClientBridgeRequest(method: string, input: unknown): Promise<unknown> {
+async function runClientBridgeRequest(
+  contribution: ExtensionUiContributionProjection,
+  context: UiExtensionFrameContext,
+  method: string,
+  input: unknown,
+): Promise<unknown> {
   if (method === 'theme') {
     return {
       colorScheme: matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light',
@@ -786,6 +895,7 @@ async function runClientBridgeRequest(method: string, input: unknown): Promise<u
     };
   }
   if (method === 'navigate') {
+    requireClientCapability(contribution, 'navigation');
     const route = (input as { route?: unknown } | null)?.route;
     if (typeof route !== 'string' || !/^[a-z][a-z0-9.-]{0,127}$/u.test(route)) {
       throw new Error('UI route is invalid');
@@ -795,6 +905,7 @@ async function runClientBridgeRequest(method: string, input: unknown): Promise<u
     return { accepted: true };
   }
   if (method === 'notify') {
+    requireClientCapability(contribution, 'notifications');
     const message = (input as { message?: unknown } | null)?.message;
     if (typeof message !== 'string' || !message.trim() || message.length > 1_024) {
       throw new Error('UI notification is invalid');
@@ -803,13 +914,20 @@ async function runClientBridgeRequest(method: string, input: unknown): Promise<u
     return { accepted: true };
   }
   if (method === 'confirm') {
+    requireClientCapability(contribution, 'dialogs');
     const message = (input as { message?: unknown } | null)?.message;
     if (typeof message !== 'string' || !message.trim() || message.length > 1_024) {
       throw new Error('UI confirmation is invalid');
     }
-    return { confirmed: window.confirm(message) };
+    const confirmed = await new Promise<boolean>((resolve) => {
+      window.dispatchEvent(new CustomEvent('maka-ui-extension-confirm', {
+        detail: { message, resolve },
+      }));
+    });
+    return { confirmed };
   }
   if (method === 'clipboard.write') {
+    requireClientCapability(contribution, 'clipboardWrite');
     const text = (input as { text?: unknown } | null)?.text;
     if (typeof text !== 'string' || text.length > 64 * 1_024) {
       throw new Error('UI clipboard payload is invalid');
@@ -817,7 +935,31 @@ async function runClientBridgeRequest(method: string, input: unknown): Promise<u
     await navigator.clipboard.writeText(text);
     return { written: true };
   }
+  if (method === 'artifact.readText' || method === 'artifact.readBinary') {
+    requireClientCapability(contribution, 'artifactRead');
+    if (!context || typeof context !== 'object' || Array.isArray(context)) {
+      throw new Error('Artifact context is unavailable');
+    }
+    const record = context as Record<string, unknown>;
+    if (
+      record.kind !== 'artifact.renderer' ||
+      typeof record.sessionId !== 'string' ||
+      typeof record.artifactId !== 'string'
+    ) throw new Error('Artifact read is only available to the active Artifact renderer');
+    return method === 'artifact.readText'
+      ? window.maka.artifacts.readText(record.sessionId, record.artifactId)
+      : window.maka.artifacts.readBinary(record.sessionId, record.artifactId);
+  }
   throw new Error('UI Client method is unavailable');
+}
+
+function requireClientCapability(
+  contribution: ExtensionUiContributionProjection,
+  capability: NonNullable<ExtensionUiContributionProjection['clientCapabilities']>[number],
+): void {
+  if (!contribution.clientCapabilities?.includes(capability)) {
+    throw new Error(`UI Client capability is not declared: ${capability}`);
+  }
 }
 
 function isAgentBridgeRequest(
