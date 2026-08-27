@@ -157,16 +157,8 @@ export function decodeUiPackageManifest(value: unknown): UiPackageManifest {
     throw invalidPackage('UI Host state permission is invalid');
   if (permissions.sessionAccess !== undefined && typeof permissions.sessionAccess !== 'boolean')
     throw invalidPackage('UI Session access permission is invalid');
-  if (
-    permissions.sessionAccess === true &&
-    !ui.some(
-      ({ surface, slot }) =>
-        surface === 'app.root' || (surface === 'app.slot' && slot === 'workspace.main'),
-    )
-  ) {
-    throw invalidPackage(
-      'Only a complete app.root or workspace.main UI may request Session access',
-    );
+  if (permissions.sessionAccess === true && !ui.some(({ surface }) => surface === 'app.root')) {
+    throw invalidPackage('Only a complete app.root UI may request Session access');
   }
   const host = record.host === undefined ? undefined : decodeHost(record.host);
   return Object.freeze({

@@ -2800,8 +2800,7 @@ function AppShellContent({
               navigation entry point. */}
           <MakaUriContext.Provider value={dispatchMakaUri}>
           <div className="maka-detail-with-artifacts">
-            <div className="maka-workspace-with-extension">
-              <div className="mainColumn" data-home-surface={homeSurfaceActive ? 'true' : undefined}>
+            <div className="mainColumn" data-home-surface={homeSurfaceActive ? 'true' : undefined}>
               {navSelection.section === 'extensions' && navSelection.module === 'skills' ? (
                 <SkillsPage
                   hubHeader={extensionsHubHeader}
@@ -3217,11 +3216,6 @@ function AppShellContent({
                   />
                 ) : null}
               </ChatSurfaceLayout>
-              </div>
-              <UiExtensionSlot
-                name="workspace.main"
-                className="maka-workspace-extension-slot"
-              />
             </div>
             {/* Rendered collapsed too: ChatWorkbar's own box is what the
                 collapse animates, and it has to be in the tree on both sides of

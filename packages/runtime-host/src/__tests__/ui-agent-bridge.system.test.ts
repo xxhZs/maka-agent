@@ -22,7 +22,7 @@ const connection: ConnectionContext = {
   acquireResidency: () => ({ release: () => undefined }),
 };
 
-test('admitted workspace UI Agent bridge invokes the shared Host Agent Runtime', async () => {
+test('admitted UI Agent bridge invokes the shared Host Agent Runtime', async () => {
   const root = await mkdtemp(join(tmpdir(), 'maka-ui-agent-bridge-'));
   const source = join(root, 'source');
   const control = join(root, 'control');
@@ -46,7 +46,7 @@ test('admitted workspace UI Agent bridge invokes the shared Host Agent Runtime',
   });
 
   try {
-    await writeUiPackage(source, true, 'workspace.main');
+    await writeUiPackage(source, true);
     await controller.recover();
     const installed = await controller.handlers['extension.package.install'](
       { sourcePath: source },
@@ -151,11 +151,7 @@ test('UI Agent bridge requires the existing Session access permission', async ()
   }
 });
 
-async function writeUiPackage(
-  source: string,
-  sessionAccess: boolean,
-  slot?: 'workspace.main',
-): Promise<void> {
+async function writeUiPackage(source: string, sessionAccess: boolean): Promise<void> {
   await mkdir(source, { recursive: true });
   await writeFile(join(source, 'dashboard.html'), '<!doctype html><main>Dashboard</main>');
   await writeFile(
@@ -167,8 +163,7 @@ async function writeUiPackage(
         contributions: [
           {
             id: 'dashboard',
-            surface: slot ? 'app.slot' : 'app.root',
-            ...(slot ? { slot } : {}),
+            surface: 'app.root',
             priority: 10,
             document: 'dashboard.html',
           },

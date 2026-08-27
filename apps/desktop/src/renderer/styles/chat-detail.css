@@ -20,43 +20,10 @@
   min-height: 0;
 }
 
-.maka-workspace-with-extension {
+.maka-detail-with-artifacts > .mainColumn {
   grid-area: main;
-  display: grid;
-  grid-template-columns: minmax(0, 1fr);
   min-width: 0;
   min-height: 0;
-}
-
-.maka-workspace-with-extension:has(> .maka-workspace-extension-slot) {
-  grid-template-columns: minmax(320px, 0.42fr) minmax(420px, 0.58fr);
-  gap: var(--agents-content-area-gap);
-}
-
-.maka-workspace-with-extension > .mainColumn,
-.maka-workspace-extension-slot {
-  min-width: 0;
-  min-height: 0;
-}
-
-.maka-workspace-extension-slot {
-  overflow: hidden;
-  border-radius: var(--radius-modal);
-  background: var(--agents-content-area-bg);
-  padding-top: var(--maka-plate-titlebar-clearance);
-  box-sizing: border-box;
-}
-
-.maka-workspace-extension-slot .maka-ui-extension-frame-host--slot,
-.maka-workspace-extension-slot .maka-ui-extension-frame--slot {
-  height: 100%;
-  min-height: 0;
-}
-
-@media (max-width: 960px) {
-  .maka-workspace-with-extension:has(> .maka-workspace-extension-slot) {
-    grid-template-columns: minmax(280px, 0.46fr) minmax(360px, 0.54fr);
-  }
 }
 
 .maka-workbar-layout-vars,

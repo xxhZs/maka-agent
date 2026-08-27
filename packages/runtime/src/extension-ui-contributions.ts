@@ -237,14 +237,10 @@ export function validateExtensionUiContribution(contribution: ExtensionUiContrib
   if (contribution.sessionAccess !== undefined && typeof contribution.sessionAccess !== 'boolean') {
     throw new ExtensionUiContributionError('invalid_ui', 'UI Session access capability is invalid');
   }
-  if (
-    contribution.sessionAccess === true &&
-    contribution.surface !== 'app.root' &&
-    !(contribution.surface === 'app.slot' && contribution.slot === 'workspace.main')
-  ) {
+  if (contribution.sessionAccess === true && contribution.surface !== 'app.root') {
     throw new ExtensionUiContributionError(
       'invalid_ui',
-      'Only a complete app.root or workspace.main UI may request Session access',
+      'Only a complete app.root UI may request Session access',
     );
   }
   if (
