@@ -22,12 +22,30 @@ test('Client Cordis tree updates one UI entry without remounting siblings', asyn
   await runtime.close();
 });
 
+test('Client Cordis tree isolates identical Entry ids across Desktop and Session scopes', async () => {
+  const runtime = new UiPluginRuntime();
+  await runtime.reconcile([
+    contribution('shared', 1, 'desktop', 'desktop-ui'),
+    contribution('shared', 1, 'session', 'session-one'),
+  ]);
+  assert.deepEqual(
+    runtime.inspect().map(({ scopeId, id }) => [scopeId, id]),
+    [
+      ['desktop-ui', 'desktop'],
+      ['session-one', 'session'],
+    ],
+  );
+  await runtime.close();
+});
+
 function contribution(
   entryId: string,
   generation: number,
   id: string,
+  scopeId = 'desktop-ui',
 ): ExtensionUiContributionProjection {
   return Object.freeze({
+    scopeId,
     entryId,
     extensionId: `fixture.${entryId}`,
     generation,

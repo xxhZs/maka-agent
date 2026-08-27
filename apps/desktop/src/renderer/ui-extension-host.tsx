@@ -29,6 +29,17 @@ const UiExtensionSlotContext = createContext<UiExtensionSlotContextValue>({
   contributions: Object.freeze([]),
   onSafeMode: () => undefined,
 });
+const UiExtensionSessionScopeContext = createContext<(sessionId: string | undefined) => void>(
+  () => undefined,
+);
+
+export function useUiExtensionSessionScope(sessionId: string | undefined): void {
+  const setSessionId = useContext(UiExtensionSessionScopeContext);
+  useEffect(() => {
+    setSessionId(sessionId);
+    return () => setSessionId(undefined);
+  }, [sessionId, setSessionId]);
+}
 
 export function UiExtensionSlotProvider({
   contributions,
@@ -67,7 +78,7 @@ export function UiExtensionSlot({
     >
       {contributions.map((item) => (
         <SandboxedUiFrame
-          key={`${item.extensionId}:${item.generation}:${item.id}`}
+          key={`${item.scopeId}:${item.extensionId}:${item.generation}:${item.id}`}
           contribution={item}
           layer="slot"
           onSafeMode={context.onSafeMode}
@@ -90,6 +101,8 @@ export function UiExtensionHost({
   officialSnapshot: () => ReactNode;
 }) {
   const [snapshot, setSnapshot] = useState<ExtensionUiSnapshotResult | null>(null);
+  const [sessionSnapshot, setSessionSnapshot] = useState<ExtensionUiSnapshotResult | null>(null);
+  const [activeSessionId, setActiveSessionId] = useState<string | undefined>();
   const [clientContributions, setClientContributions] = useState<
     readonly ExtensionUiContributionProjection[]
   >(Object.freeze([]));
@@ -119,9 +132,40 @@ export function UiExtensionHost({
   }, []);
 
   useEffect(() => {
+    let disposed = false;
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    if (!activeSessionId) {
+      setSessionSnapshot(null);
+      return;
+    }
+    const refresh = async () => {
+      try {
+        const next = await window.maka.runtimeHost.query('extension.ui.snapshot', {
+          scopeId: activeSessionId,
+        });
+        if (!disposed) {
+          setSessionSnapshot((current) => (current?.digest === next.digest ? current : next));
+        }
+      } catch {
+        if (!disposed) setSessionSnapshot(null);
+      } finally {
+        if (!disposed) timer = setTimeout(refresh, REFRESH_MS);
+      }
+    };
+    void refresh();
+    return () => {
+      disposed = true;
+      if (timer) clearTimeout(timer);
+    };
+  }, [activeSessionId]);
+
+  useEffect(() => {
     let cancelled = false;
     void clientRuntime
-      .reconcile(snapshot?.contributions ?? [])
+      .reconcile([
+        ...(snapshot?.contributions ?? []),
+        ...(sessionSnapshot?.contributions ?? []),
+      ])
       .then((contributions) => {
         if (!cancelled) setClientContributions(contributions);
       })
@@ -129,7 +173,7 @@ export function UiExtensionHost({
     return () => {
       cancelled = true;
     };
-  }, [clientRuntime, snapshot]);
+  }, [clientRuntime, sessionSnapshot, snapshot]);
 
   useEffect(
     () => () => {
@@ -155,10 +199,11 @@ export function UiExtensionHost({
   );
   const selectedRoot = safeMode ? selected.official : selected.root;
   return (
+    <UiExtensionSessionScopeContext.Provider value={setActiveSessionId}>
     <div
       className="maka-ui-extension-shell"
       data-ui-safe-mode={safeMode || undefined}
-      data-ui-composition-id={safeMode ? 'dev.maka.desktop@desktop-build' : snapshot?.digest}
+      data-ui-composition-id={safeMode ? 'dev.maka.desktop@desktop-build' : `${snapshot?.digest ?? ''}:${sessionSnapshot?.digest ?? ''}`}
     >
       {selectedRoot.kind === 'sandboxed' ? (
         <SandboxedUiFrame
@@ -184,7 +229,7 @@ export function UiExtensionHost({
       )}
       {!safeMode && selected.overlays.map((item) => (
         <SandboxedUiFrame
-          key={`${item.extensionId}:${item.id}`}
+          key={`${item.scopeId}:${item.extensionId}:${item.id}`}
           contribution={item}
           layer="overlay"
           onSafeMode={() => setSafeMode(true)}
@@ -193,6 +238,7 @@ export function UiExtensionHost({
         />
       ))}
     </div>
+    </UiExtensionSessionScopeContext.Provider>
   );
 }
 
@@ -288,7 +334,7 @@ function SandboxedUiFrame({
         return;
       }
       const identity = {
-        scopeId: DESKTOP_UI_SCOPE,
+        scopeId: contribution.scopeId,
         entryId: contribution.entryId,
         extensionId: contribution.extensionId,
         generation: contribution.generation,
@@ -343,7 +389,7 @@ function SandboxedUiFrame({
         sandbox="allow-scripts allow-modals"
         referrerPolicy="no-referrer"
         src={uiExtensionFrameUrl({
-          scopeId: DESKTOP_UI_SCOPE,
+          scopeId: contribution.scopeId,
           entryId: contribution.entryId,
           extensionId: contribution.extensionId,
           generation: contribution.generation,
@@ -442,7 +488,7 @@ function slotChildren(
 }
 
 function contributionKey(contribution: ExtensionUiContributionProjection): string {
-  return `${contribution.entryId}:${contribution.generation}:${contribution.id}`;
+  return `${contribution.scopeId}:${contribution.entryId}:${contribution.generation}:${contribution.id}`;
 }
 
 function postBridgeReady(frame: HTMLIFrameElement | null, token: string): void {

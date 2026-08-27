@@ -342,6 +342,7 @@ export class HostExtensionController {
       .inspectUi(input.scopeId)
       .map((item) =>
         Object.freeze({
+          scopeId: item.scopeId,
           entryId: item.entryId,
           extensionId: item.extensionId,
           generation: item.generation,
