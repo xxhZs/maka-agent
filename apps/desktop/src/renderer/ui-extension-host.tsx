@@ -310,13 +310,6 @@ function SandboxedUiFrame({
             ...identity,
             key: request.key,
           })
-          : request.kind === 'events'
-            ? window.maka.runtimeHost.query('extension.ui.state.events', {
-                ...identity,
-                key: request.key,
-                afterSequence: request.afterSequence,
-                waitMs: request.waitMs,
-              })
           : window.maka.runtimeHost.command(
             'extension.ui.state.mutate',
             request.kind === 'set'
@@ -460,7 +453,6 @@ type UiBridgeRequest =
   | { id: string; kind: 'config' }
   | { id: string; kind: 'get' | 'delete'; key: string }
   | { id: string; kind: 'set'; key: string; value: unknown }
-  | { id: string; kind: 'events'; key: string; afterSequence: number; waitMs: number }
   | { id: string; kind: 'invoke'; method: string; args: unknown }
   | { id: string; kind: 'agent_invoke'; method: string; input: unknown };
 
@@ -484,24 +476,6 @@ function decodeBridgeRequest(value: unknown, token: string): UiBridgeRequest | n
       kind: request.kind,
       method: request.method,
       input: request.input,
-    };
-  }
-  if (request.kind === 'events') {
-    if (
-      typeof request.key !== 'string' ||
-      !/^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$/u.test(request.key) ||
-      !Number.isSafeInteger(request.afterSequence) ||
-      (request.afterSequence as number) < 0 ||
-      !Number.isSafeInteger(request.waitMs) ||
-      (request.waitMs as number) < 0 ||
-      (request.waitMs as number) > 25_000
-    ) return null;
-    return {
-      id: request.id,
-      kind: request.kind,
-      key: request.key,
-      afterSequence: request.afterSequence as number,
-      waitMs: request.waitMs as number,
     };
   }
   if (request.kind !== 'get' && request.kind !== 'set' && request.kind !== 'delete') return null;

@@ -34,25 +34,3 @@ test('UI state is isolated by Entry identity and survives restart', async () => 
     await rm(root, { recursive: true, force: true });
   }
 });
-
-test('UI state changes wake ordered revision subscribers without polling', async () => {
-  const store = new HostExtensionUiStateStore();
-  const waiting = store.nextChanges('desktop-ui', 'entry-a', 0, 1_000);
-  await store.set('desktop-ui', 'entry-a', 'status', { phase: 'running' });
-  assert.deepEqual(await waiting, {
-    sequence: 1,
-    changes: [
-      {
-        sequence: 1,
-        kind: 'set',
-        key: 'status',
-        value: { phase: 'running' },
-      },
-    ],
-  });
-  await store.delete('desktop-ui', 'entry-a', 'status');
-  assert.deepEqual(await store.nextChanges('desktop-ui', 'entry-a', 1, 0), {
-    sequence: 2,
-    changes: [{ sequence: 2, kind: 'delete', key: 'status' }],
-  });
-});
