@@ -42,6 +42,7 @@ import {
   type TurnFooterActionMeta,
   type WorkspacePickerModel,
   useToast,
+  ToolResultContributionProvider,
   activeInteractionFor,
   deriveTitlebarProjectName,
   enqueueInteraction,
@@ -95,7 +96,12 @@ import {
 } from './plan-mode-panel';
 import { McpPage } from './mcp-page';
 import { UiExtensionsPage } from './ui-extensions-page';
-import { UiExtensionSlot, useUiExtensionSessionScope } from './ui-extension-host';
+import {
+  UiExtensionSlot,
+  useUiConversationItems,
+  useUiExtensionSessionScope,
+  useUiToolResultContributionRenderer,
+} from './ui-extension-host';
 import { getOnboardingActivationCandidate, useOnboardingSnapshot } from './use-onboarding-snapshot';
 import type { AppUpdateStatus, OnboardingSnapshot } from '../preload/bridge-contract.js';
 import { DESKTOP_TRANSCRIPT_RANGE_MAX_BYTES } from '../preload/transcript-contract.js';
@@ -414,6 +420,11 @@ function AppShellContent({
     ));
   }, []);
   const navSelectionRef = useRef<NavSelection>(navSelection);
+  useEffect(() => {
+    const receive = () => setNavSelection({ section: 'extensions', module: 'ui' });
+    window.addEventListener('maka-ui-extension-navigate', receive);
+    return () => window.removeEventListener('maka-ui-extension-navigate', receive);
+  }, [setNavSelection]);
   // #1985: the shell's complete read of session UI state. See the hook for why
   // the two token-rate maps are absent.
   const {
@@ -2642,6 +2653,8 @@ function AppShellContent({
       : navSelection.section === 'extensions'
         ? navSelection.module
         : 'im_hub';
+  const extensionConversationItems = useUiConversationItems(messages, activeId);
+  const extensionToolResultRenderer = useUiToolResultContributionRenderer();
 
   return (
     <div
@@ -3071,6 +3084,7 @@ function AppShellContent({
                 }
               >
                 {navSelection.section === 'sessions' ? (
+                  <ToolResultContributionProvider render={extensionToolResultRenderer}>
                   <ChatMessageSurface
                 beforeExtension={<UiExtensionSlot name="conversation.before" />}
                 headerExtension={<UiExtensionSlot name="conversation.header" />}
@@ -3221,8 +3235,12 @@ function AppShellContent({
                     );
                   }
                 }}
-                conversationItems={planConversationItems}
-                  />
+                conversationItems={[
+                  ...(planConversationItems ?? []),
+                  ...(extensionConversationItems ?? []),
+                ]}
+                    />
+                  </ToolResultContributionProvider>
                 ) : null}
               </ChatSurfaceLayout>
               <UiExtensionSlot name="workspace.panel" className="maka-ui-extension-slot--panel" />

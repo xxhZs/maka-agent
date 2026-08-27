@@ -129,3 +129,60 @@
 .maka-ui-extension-slot--statusbar .maka-ui-extension-frame-host--slot {
   min-height: 2rem;
 }
+
+.maka-ui-extension-notification {
+  position: fixed;
+  right: 24px;
+  bottom: 24px;
+  z-index: 2147483200;
+  max-width: min(420px, calc(100vw - 48px));
+  padding: 10px 14px;
+  border: 1px solid var(--astryx-border-subtle, rgba(127, 127, 127, 0.28));
+  border-radius: 10px;
+  background: var(--astryx-surface-raised, Canvas);
+  color: var(--astryx-text-primary, CanvasText);
+  box-shadow: 0 12px 36px rgba(0, 0, 0, 0.18);
+}
+
+.maka-ui-extension-point--page .maka-ui-extension-frame-host--slot {
+  min-height: 480px;
+}
+
+.maka-ui-extension-point--settings .maka-ui-extension-frame-host--slot {
+  min-height: 360px;
+}
+
+.maka-ui-extension-point--conversation-node .maka-ui-extension-frame-host--slot,
+.maka-ui-extension-point--tool-result .maka-ui-extension-frame-host--slot,
+.maka-ui-extension-point--artifact .maka-ui-extension-frame-host--slot {
+  min-height: 120px;
+}
+
+.maka-ui-extension-settings-page-tabs {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin-bottom: 12px;
+}
+
+.maka-ui-extension-settings-page-tabs button {
+  padding: 6px 10px;
+  border: 1px solid var(--astryx-border-subtle, rgba(127, 127, 127, 0.28));
+  border-radius: 8px;
+  background: transparent;
+  color: inherit;
+}
+
+.maka-ui-extension-settings-page-tabs button[aria-selected="true"] {
+  background: var(--astryx-surface-selected, rgba(107, 92, 255, 0.12));
+}
+
+.maka-ui-extension-inspection {
+  max-height: 360px;
+  margin: 12px 0;
+  padding: 12px;
+  overflow: auto;
+  border: 1px solid var(--astryx-border-subtle, rgba(127, 127, 127, 0.28));
+  border-radius: 10px;
+  white-space: pre-wrap;
+}

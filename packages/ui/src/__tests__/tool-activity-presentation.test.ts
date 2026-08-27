@@ -2,7 +2,7 @@ import assert from 'node:assert/strict';
 import { describe, it } from 'node:test';
 import { createElement, type ReactNode } from 'react';
 import { renderToStaticMarkup as renderReactToStaticMarkup } from 'react-dom/server';
-import { ToolCallDetail } from '../tool-activity.js';
+import { ToolCallDetail, ToolResultContributionProvider } from '../tool-activity.js';
 import type { ToolActivityItem } from '../materialize.js';
 import { LocaleProvider } from '../locale-context.js';
 
@@ -14,6 +14,26 @@ function renderToStaticMarkup(node: ReactNode): string {
 }
 
 describe('tool activity presentation', () => {
+  it('lets a native UI contribution replace one Tool result detail', () => {
+    const item = {
+      toolUseId: 'tool-extension',
+      toolName: 'CustomInspect',
+      status: 'completed',
+      args: {},
+      result: { kind: 'json', value: { ok: true } },
+    } satisfies ToolActivityItem;
+    const markup = renderToStaticMarkup(createElement(
+      ToolResultContributionProvider,
+      {
+        render: (candidate) => candidate.toolName === 'CustomInspect'
+          ? createElement('div', { 'data-extension-tool-result': true }, 'Contributed result')
+          : undefined,
+        children: createElement(ToolCallDetail, { item }),
+      },
+    ));
+    assert.match(markup, /data-extension-tool-result/);
+    assert.match(markup, /Contributed result/);
+  });
   it('contains a malformed persisted terminal result instead of crashing the renderer', () => {
     const malformed = {
       kind: 'terminal',

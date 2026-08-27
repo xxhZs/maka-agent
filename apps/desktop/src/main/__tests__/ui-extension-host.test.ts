@@ -125,6 +125,11 @@ describe('Desktop UI extension shell', () => {
     assert.match(bridged, /data-maka-slot/);
     assert.match(bridged, /workspace\.body/);
     assert.match(bridged, /getConfig/);
+    assert.match(bridged, /getContext/);
+    assert.match(bridged, /onContext/);
+    assert.match(bridged, /clientApi/);
+    assert.match(bridged, /writeClipboard/);
+    assert.match(bridged, /data-maka-ui-sdk="1"/);
     assert.match(bridged, /test-token/);
   });
 
