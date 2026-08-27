@@ -566,16 +566,6 @@ export function ArtifactPane(props: {
                   source: previewRecord.source ?? null,
                 }}
                 className="maka-ui-extension-point--artifact"
-                fallback={(
-                  <ArtifactPreview
-                    key={previewRecord.id}
-                    record={previewRecord}
-                    onShowInFolder={() => void runArtifactAction(
-                      `${previewRecord.id}:open`,
-                      () => openInFinder(previewRecord.id),
-                    )}
-                  />
-                )}
               />
             ) : (
               <ArtifactPreview

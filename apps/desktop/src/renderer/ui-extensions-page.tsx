@@ -5,8 +5,6 @@ import { FolderOpen, Monitor, RefreshCcw, Trash2, ICON_SIZE } from '@maka/ui/ico
 import type { UiExtensionEntry } from '../preload/bridge-contract.js';
 import {
   UiExtensionPoint,
-  nativePointLabel,
-  uniqueUiExtensionPoints,
   useUiExtensionPoints,
 } from './ui-extension-host.js';
 
@@ -14,8 +12,9 @@ export function UiExtensionsPage({ hubHeader }: { hubHeader: ModuleHubHeader }) 
   const [entries, setEntries] = useState<readonly UiExtensionEntry[]>([]);
   const [busy, setBusy] = useState<string | null>('load');
   const [error, setError] = useState<string | null>(null);
-  const routeContributions = uniqueUiExtensionPoints(useUiExtensionPoints('client.route.'));
-  const contributedPages = routeContributions;
+  const routeContributions = useUiExtensionPoints('client.route.');
+  const settingsContributions = useUiExtensionPoints('settings.page.');
+  const contributedPages = [...routeContributions, ...settingsContributions];
   const [activeRoute, setActiveRoute] = useState<string | null>(() => {
     const route = window.sessionStorage.getItem('maka-ui-extension-route-v1');
     if (!route) return null;
@@ -48,11 +47,6 @@ export function UiExtensionsPage({ hubHeader }: { hubHeader: ModuleHubHeader }) 
     window.addEventListener('maka-ui-extension-navigate', receive);
     return () => window.removeEventListener('maka-ui-extension-navigate', receive);
   }, [contributedPages]);
-  useEffect(() => {
-    if (activeRoute && !contributedPages.some(({ slot }) => slot === activeRoute)) {
-      setActiveRoute(null);
-    }
-  }, [activeRoute, contributedPages]);
 
   const act = async (label: string, operation: () => Promise<unknown>) => {
     setBusy(label);
@@ -68,7 +62,6 @@ export function UiExtensionsPage({ hubHeader }: { hubHeader: ModuleHubHeader }) 
     all.findIndex((candidate) => candidate.extensionId === entry.extensionId) === index,
   );
   const inspectedEntry = latest.find(({ extensionId }) => extensionId === inspected);
-  const activeContribution = contributedPages.find(({ slot }) => slot === activeRoute);
   return (
     <main className="maka-main detailPane maka-module-main agents-chat-panel" data-page-shell="layout" data-module="ui-extensions" data-maka-contract="module-main" aria-label="Extensions">
       <ModulePage
@@ -96,25 +89,24 @@ export function UiExtensionsPage({ hubHeader }: { hubHeader: ModuleHubHeader }) 
                 <Button
                   key={`${page.extensionId}:${page.id}`}
                   variant={activeRoute === page.slot ? 'primary' : 'secondary'}
-                  label={page.title ?? nativePointLabel(page.slot ?? page.id)}
+                  label={pageLabel(page.slot ?? page.id)}
                   onClick={() => setActiveRoute(page.slot ?? null)}
                 />
               ))}
             </div>
-            {activeContribution ? (
+            {activeRoute ? (
               <UiExtensionPoint
-                names={[activeContribution.slot ?? '']}
-                context={{ kind: 'client.route', route: activeContribution.slot ?? activeContribution.id }}
+                names={[activeRoute]}
+                context={{ kind: activeRoute.startsWith('settings.page.') ? 'settings.page' : 'client.route', route: activeRoute }}
                 className="maka-ui-extension-point--page"
-                single
               />
             ) : null}
           </section>
         ) : null}
         {error ? <div role="alert" className="maka-module-error">{error}</div> : null}
-        {!activeContribution && latest.length === 0 && busy === null ? (
+        {latest.length === 0 && busy === null ? (
           <EmptyState icon={<Monitor size={ICON_SIZE.empty} />} title="还没有插件" description="安装插件目录或 .maka-extension Bundle；一个插件可同时提供 Tool、UI、Event、Service 和 Timer。" />
-        ) : !activeContribution ? (
+        ) : (
           <>
           <List aria-label="已安装插件">
             {latest.map((entry) => (
@@ -161,24 +153,15 @@ export function UiExtensionsPage({ hubHeader }: { hubHeader: ModuleHubHeader }) 
                       ))
                     : null}
                   {entry.entries.map((compositionEntry) => (
-                    <div key={`revision:${compositionEntry.entryId}`} className="maka-ui-extension-revision-actions">
-                      <Button
-                        variant="ghost"
-                        label={`重载 ${compositionEntry.scopeId} · r${compositionEntry.generation}`}
-                        isDisabled={busy !== null}
-                        onClick={() => void act(`reload:${compositionEntry.entryId}`, () =>
-                          window.maka.uiExtensions.reload(compositionEntry.entryId),
-                        )}
-                      />
-                      <Button
-                        variant="ghost"
-                        label="回滚上一版"
-                        isDisabled={busy !== null}
-                        onClick={() => void act(`rollback:${compositionEntry.entryId}`, () =>
-                          window.maka.uiExtensions.rollback(compositionEntry.entryId),
-                        )}
-                      />
-                    </div>
+                    <Button
+                      key={`reload:${compositionEntry.entryId}`}
+                      variant="ghost"
+                      label={`重载 ${compositionEntry.scopeId} · r${compositionEntry.generation}`}
+                      isDisabled={busy !== null}
+                      onClick={() => void act(`reload:${compositionEntry.entryId}`, () =>
+                        window.maka.uiExtensions.reload(compositionEntry.entryId),
+                      )}
+                    />
                   ))}
                   <Button
                     variant="ghost"
@@ -211,13 +194,20 @@ export function UiExtensionsPage({ hubHeader }: { hubHeader: ModuleHubHeader }) 
                     .filter(([, property]) => property.secret)
                     .map(([key]) => key),
                 },
-                reloadPolicy: 'candidate activation is atomic; failed reload keeps the committed generation; one previous package revision can be restored',
+                reloadPolicy: 'candidate activation is atomic; failed reload keeps the committed generation',
               }, null, 2)}
             </pre>
           ) : null}
           </>
-        ) : null}
+        )}
       </ModulePage>
     </main>
   );
+}
+
+function pageLabel(slot: string): string {
+  const value = slot.replace(/^(?:client\.route|settings\.page)\./u, '');
+  return value.split(/[.-]/u).filter(Boolean).map((part) =>
+    `${part.charAt(0).toUpperCase()}${part.slice(1)}`,
+  ).join(' ');
 }

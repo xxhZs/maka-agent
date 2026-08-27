@@ -45,7 +45,6 @@ export function registerRuntimeHostUiExtensionsIpc(input: {
             `${manifest.timerCount} Timer contribution${manifest.timerCount === 1 ? '' : 's'}`,
             `Host state: ${manifest.permissions.hostState ? 'allowed' : 'not allowed'}`,
             `Session control: ${manifest.permissions.sessionAccess ? 'allowed' : 'not allowed'}`,
-            `Client capabilities: ${manifest.permissions.clientCapabilities.length === 0 ? 'none' : manifest.permissions.clientCapabilities.join(', ')}`,
             `Host methods: ${manifest.hostMethods.length === 0 ? 'none' : manifest.hostMethods.join(', ')}`,
             `Network: ${manifest.permissions.network ? 'allowed' : 'blocked'}`,
             `Workspace: ${manifest.permissions.workspace}`,
@@ -98,14 +97,6 @@ export function registerRuntimeHostUiExtensionsIpc(input: {
   input.ipcMain.handle('ui-extensions:reload', async (_event, entryId: string) => {
     const result = await input.client.request('extension.composition.mutate', {
       kind: 'reload',
-      entryId,
-    });
-    return { ok: true as const, entry: result.entry };
-  });
-
-  input.ipcMain.handle('ui-extensions:rollback', async (_event, entryId: string) => {
-    const result = await input.client.request('extension.composition.mutate', {
-      kind: 'rollback',
       entryId,
     });
     return { ok: true as const, entry: result.entry };
@@ -178,7 +169,7 @@ async function listUiExtensions(client: DesktopRuntimeHostClient) {
     });
 }
 
-async function previewPackage(sourcePath: string): Promise<{ id: string; uiCount: number; toolCount: number; eventCount: number; serviceCount: number; timerCount: number; hostMethods: string[]; permissions: { network: boolean; hostState: boolean; sessionAccess: boolean; clientCapabilities: string[]; workspace: string } }> {
+async function previewPackage(sourcePath: string): Promise<{ id: string; uiCount: number; toolCount: number; eventCount: number; serviceCount: number; timerCount: number; hostMethods: string[]; permissions: { network: boolean; hostState: boolean; sessionAccess: boolean; workspace: string } }> {
   if (!(await stat(sourcePath)).isDirectory()) return previewBundle(sourcePath);
   const encoded = await readFile(join(sourcePath, 'maka.extension.json'), 'utf8');
   return previewManifest(JSON.parse(encoded) as Record<string, unknown>);
@@ -247,9 +238,6 @@ function previewManifest(value: Record<string, unknown>): Awaited<ReturnType<typ
       network: permissions?.network === true || runtimePermissions?.network === true,
       hostState: permissions?.hostState === true,
       sessionAccess: permissions?.sessionAccess === true,
-      clientCapabilities: Array.isArray(permissions?.clientCapabilities)
-        ? permissions.clientCapabilities.filter((value): value is string => typeof value === 'string')
-        : [],
       workspace:
         typeof runtimePermissions?.workspace === 'string' ? runtimePermissions.workspace : 'none',
     },

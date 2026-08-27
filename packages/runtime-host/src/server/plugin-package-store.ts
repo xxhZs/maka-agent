@@ -65,20 +65,20 @@ export class PluginPackageStore {
     const decoded = await decodePackage(sourcePath, files);
     const target = join(this.root, decoded.manifest.id);
     const staging = join(this.root, `.staging-${randomUUID()}`);
-    const previous = join(this.root, rollbackDirectory(decoded.manifest.id));
+    const previous = join(this.root, `.previous-${randomUUID()}`);
     let committed = false;
     try {
       await mkdir(this.root, { recursive: true, mode: 0o700 });
       await mkdir(staging, { mode: 0o700 });
       for (const file of files) await writeStoredFile(staging, file);
       await syncTree(staging, files);
-      await rm(previous, { recursive: true, force: true });
       await rename(target, previous).catch((error: NodeJS.ErrnoException) => {
         if (error.code !== 'ENOENT') throw error;
       });
       await rename(staging, target);
       committed = true;
       await syncDirectory(this.root);
+      await rm(previous, { recursive: true, force: true });
       return freezeInstalled(target, decoded);
     } catch (error) {
       if (!committed) await rename(previous, target).catch(() => undefined);
@@ -185,7 +185,6 @@ export class PluginPackageStore {
     const target = join(this.root, extensionId);
     try {
       await rm(target, { recursive: true, force: false });
-      await rm(join(this.root, rollbackDirectory(extensionId)), { recursive: true, force: true });
       await syncDirectory(this.root).catch(() => undefined);
     } catch (error) {
       if ((error as NodeJS.ErrnoException).code !== 'ENOENT') {
@@ -193,36 +192,6 @@ export class PluginPackageStore {
       }
     }
   }
-
-  async rollback(extensionId: string): Promise<InstalledPluginPackage> {
-    requireIdentity(extensionId);
-    const target = join(this.root, extensionId);
-    const previous = join(this.root, rollbackDirectory(extensionId));
-    const swapping = join(this.root, `.rollback-swap-${randomUUID()}`);
-    try {
-      if (!(await stat(previous)).isDirectory())
-        throw new Error('Rollback package is not a directory');
-      await rename(target, swapping);
-      await rename(previous, target);
-      await rename(swapping, previous);
-      await syncDirectory(this.root);
-      return await this.load(extensionId);
-    } catch (error) {
-      await rename(swapping, target).catch(() => undefined);
-      if ((error as NodeJS.ErrnoException).code === 'ENOENT') {
-        throw new PluginPackageStoreError(
-          'not_found',
-          `No rollback revision is available: ${extensionId}`,
-        );
-      }
-      if (error instanceof PluginPackageStoreError) throw error;
-      throw persistence(`Unable to roll back Plugin package ${extensionId}`, error);
-    }
-  }
-}
-
-function rollbackDirectory(extensionId: string): string {
-  return `.rollback-${extensionId}`;
 }
 
 interface DecodedPackage {

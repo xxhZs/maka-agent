@@ -168,7 +168,6 @@ test('Extension control protocol strictly decodes catalog and lifecycle mutation
       digest: 'sha256-demo',
       contributions: [
         {
-          scopeId: 'desktop-ui',
           entryId: 'ui-entry',
           extensionId: 'dev.maka.appearance',
           generation: 2,
@@ -181,7 +180,6 @@ test('Extension control protocol strictly decodes catalog and lifecycle mutation
           sessionAccess: true,
         },
         {
-          scopeId: 'desktop-ui',
           entryId: 'legacy-overlay-entry',
           extensionId: 'dev.maka.legacy-overlay',
           generation: 1,

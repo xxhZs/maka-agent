@@ -509,9 +509,6 @@ const makaBridge = {
     reload(entryId: string) {
       return invokeActiveRuntimeHost('ui-extensions:reload', entryId);
     },
-    rollback(entryId: string) {
-      return invokeActiveRuntimeHost('ui-extensions:rollback', entryId);
-    },
     getConfiguration(entryId: string) {
       return invokeActiveRuntimeHost('ui-extensions:getConfiguration', entryId);
     },

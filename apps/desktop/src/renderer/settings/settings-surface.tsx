@@ -13,7 +13,7 @@ import {
   SideNavSection,
   useMediaQuery,
 } from '@astryxdesign/core';
-import { ICON_SIZE, ArrowLeft, Monitor } from '@maka/ui/icons';
+import { ICON_SIZE, ArrowLeft } from '@maka/ui/icons';
 import type {
   AppSettings,
   ChatDefaultPermissionMode,
@@ -51,7 +51,7 @@ import { UsageSettingsPage } from './usage-settings-page';
 import { WebSearchSettingsPage } from './web-search-settings-page';
 import type { UiLocaleUpdateGate } from './ui-locale-update-gate';
 import { getSettingsSharedCopy } from '../locales/settings-shared-copy.js';
-import { UiExtensionPoint, UiExtensionSlot, nativePointLabel, uniqueUiExtensionPoints, useUiExtensionPoints } from '../ui-extension-host.js';
+import { UiExtensionSettingsPages, UiExtensionSlot } from '../ui-extension-host.js';
 
 const NARROW_SETTINGS_QUERY = '(max-width: 760px)';
 
@@ -81,14 +81,7 @@ export function SettingsSurface(props: {
   const copy = getSettingsSharedCopy(locale);
   const localizedNav = groupedNav(locale);
   const isNarrowSettings = useMediaQuery(NARROW_SETTINGS_QUERY);
-  const extensionSettingsPages = uniqueUiExtensionPoints(useUiExtensionPoints('settings.page.'));
-  const [section, setSection] = useState<SettingsSection | string>(() => props.requestedSection ?? readLastSettingsSection());
-  useEffect(() => {
-    if (
-      section.startsWith('settings.page.') &&
-      !extensionSettingsPages.some(({ slot }) => slot === section)
-    ) setSection(readLastSettingsSection());
-  }, [extensionSettingsPages, section]);
+  const [section, setSection] = useState<SettingsSection>(() => props.requestedSection ?? readLastSettingsSection());
   const [providerCatalogRequested, setProviderCatalogRequested] = useState(props.openProviderCatalog === true);
   // One-shot landing intent, mirroring providerCatalogRequested above: the
   // request retires once ProvidersPanel consumes it, so remounting the panel
@@ -153,9 +146,7 @@ export function SettingsSurface(props: {
   }, []);
 
   useEffect(() => {
-    if (SETTINGS_NAV.some((item) => item.id === section)) {
-      safeLocalStorageSet('maka-settings-section-v1', section);
-    }
+    safeLocalStorageSet('maka-settings-section-v1', section);
   }, [section]);
   const [settings, setSettings] = useState<AppSettings>(() => createDefaultSettings());
   const [usageStats, setUsageStats] = useState<UsageStats | null>(null);
@@ -260,13 +251,7 @@ export function SettingsSurface(props: {
   // boundary — so an unrouted section fails loudly at build time instead of
   // silently rendering 通用 copy over a different page's body. The nav
   // highlight below still keys off `section === item.id` independently.
-  const extensionPage = extensionSettingsPages.find(({ slot }) => slot === section);
-  const headerCopy = extensionPage
-    ? {
-        label: extensionPage.title ?? nativePointLabel(extensionPage.slot ?? extensionPage.id),
-        description: extensionPage.description ?? '',
-      }
-    : getSettingsNavigationCopy(locale).sections[section as SettingsSection];
+  const headerCopy = getSettingsNavigationCopy(locale).sections[section];
 
   return (
     <div className="settingsSurface" data-modal="true">
@@ -326,19 +311,6 @@ export function SettingsSurface(props: {
                   ))}
                 </SideNavSection>
               ))}
-              {extensionSettingsPages.length > 0 ? (
-                <SideNavSection title="插件">
-                  {extensionSettingsPages.map((page) => (
-                    <SideNavItem
-                      key={`${page.scopeId}:${page.extensionId}:${page.id}`}
-                      label={page.title ?? nativePointLabel(page.slot ?? page.id)}
-                      icon={<Monitor size={ICON_SIZE.chrome} aria-hidden="true" />}
-                      isSelected={section === page.slot}
-                      onClick={() => setSection(page.slot ?? page.id)}
-                    />
-                  ))}
-                </SideNavSection>
-              ) : null}
             </SideNav>
           </LayoutPanel>
         )}
@@ -373,20 +345,13 @@ export function SettingsSurface(props: {
               )}
               content={(
                 <LayoutContent padding={6}>
-                  {extensionPage ? (
-                    <UiExtensionPoint
-                      names={[extensionPage.slot ?? '']}
-                      context={{ kind: 'settings.page', page: extensionPage.slot ?? extensionPage.id }}
-                      className="maka-ui-extension-point--settings"
-                      single
-                    />
-                  ) : null}
-                  {!extensionPage ? <UiExtensionSlot name="settings.content" /> : null}
-                  {!extensionPage && loading ? (
+                  <UiExtensionSlot name="settings.content" />
+                  <UiExtensionSettingsPages />
+                  {loading ? (
                     <SettingsSkeleton />
-                  ) : !extensionPage ? (
+                  ) : (
                     <SettingsPageBody
-                      section={section as SettingsSection}
+                      section={section}
                       settings={settings}
                       usageStats={usageStats}
                       connections={props.connections}
@@ -407,7 +372,7 @@ export function SettingsSurface(props: {
                       initialCreateProviderType={createProviderRequest}
                       onInitialCreateProviderConsumed={() => setCreateProviderRequest(undefined)}
                     />
-                  ) : null}
+                  )}
                 </LayoutContent>
               )}
             />

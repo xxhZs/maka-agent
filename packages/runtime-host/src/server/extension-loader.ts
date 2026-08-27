@@ -53,7 +53,6 @@ export interface HostTrustedToolExtensionLoader {
   load(extensionId: string): Promise<HostExtensionInput>;
   installPackage?(sourcePath: string): Promise<TrustedExtensionProjection>;
   uninstallPackage?(extensionId: string): Promise<void>;
-  rollbackPackage?(extensionId: string): Promise<TrustedExtensionProjection>;
   contracts?(): Promise<readonly ExtensionPackageContractProjection[]>;
   exportPackage?(extensionId: string, targetPath: string): Promise<void>;
   setConfigurationResolver?(
@@ -336,14 +335,6 @@ export class InstalledPluginPackageLoader implements HostTrustedToolExtensionLoa
     }
   }
 
-  async rollbackPackage(extensionId: string): Promise<TrustedExtensionProjection> {
-    try {
-      return projectPluginPackage(await this.packages.rollback(extensionId));
-    } catch (error) {
-      throw translatePackageError(error);
-    }
-  }
-
   async #load(extensionId: string): Promise<InstalledPluginPackage> {
     try {
       return await this.packages.load(extensionId);
@@ -439,9 +430,6 @@ async function uiPackageInput(
             ...(item.slot ? { slot: item.slot } : {}),
             slots: item.slots,
             priority: item.priority,
-            title: item.title,
-            description: item.description,
-            order: item.order,
             document: await store.readDocument(installed, item.document),
             network: installed.manifest.permissions.network,
             hostState: installed.manifest.permissions.hostState,
@@ -450,7 +438,6 @@ async function uiPackageInput(
             ),
             sessionAccess:
               installed.manifest.permissions.sessionAccess && item.surface === 'app.root',
-            clientCapabilities: installed.manifest.permissions.clientCapabilities,
           }),
         ),
       ),

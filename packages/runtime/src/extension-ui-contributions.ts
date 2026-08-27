@@ -4,14 +4,6 @@ import type { MakaContributionContext } from './plugin-runtime.js';
 export const EXTENSION_UI_DOCUMENT_MAX_BYTES = 1024 * 1024;
 export const EXTENSION_UI_SURFACES = ['app.root', 'app.overlay', 'app.slot'] as const;
 export type ExtensionUiSurface = (typeof EXTENSION_UI_SURFACES)[number];
-export const EXTENSION_UI_CLIENT_CAPABILITIES = [
-  'navigation',
-  'notifications',
-  'dialogs',
-  'clipboardWrite',
-  'artifactRead',
-] as const;
-export type ExtensionUiClientCapability = (typeof EXTENSION_UI_CLIENT_CAPABILITIES)[number];
 export const EXTENSION_UI_SLOT_PATTERN = /^[a-z][a-z0-9]*(?:[.-][a-z0-9]+)*$/u;
 
 export interface ExtensionUiContribution {
@@ -22,9 +14,6 @@ export interface ExtensionUiContribution {
   /** Child composition seats declared by this contribution. */
   readonly slots?: readonly string[];
   readonly priority: number;
-  readonly title?: string;
-  readonly description?: string;
-  readonly order?: number;
   readonly document: string;
   /** Sandboxed documents are offline unless this explicit capability is true. */
   readonly network: boolean;
@@ -32,7 +21,6 @@ export interface ExtensionUiContribution {
   readonly hostMethods?: readonly string[];
   /** Explicit authority for a full-root document to drive Maka Sessions. */
   readonly sessionAccess?: boolean;
-  readonly clientCapabilities?: readonly ExtensionUiClientCapability[];
 }
 
 export interface ExtensionUiContributionInspection {
@@ -45,16 +33,12 @@ export interface ExtensionUiContributionInspection {
   readonly slot?: string;
   readonly slots: readonly string[];
   readonly priority: number;
-  readonly title: string;
-  readonly description: string;
-  readonly order: number;
   readonly document: string;
   readonly documentSha256: string;
   readonly network: boolean;
   readonly hostState: boolean;
   readonly hostMethods: readonly string[];
   readonly sessionAccess: boolean;
-  readonly clientCapabilities: readonly ExtensionUiClientCapability[];
 }
 
 export type ExtensionUiReadiness = 'pending' | 'ready' | 'failed';
@@ -147,14 +131,10 @@ export class ExtensionUiContributionRegistry {
       extensionId: context.extensionId,
       generation: context.generation,
       ...contribution,
-      title: contribution.title ?? contribution.id,
-      description: contribution.description ?? '',
-      order: contribution.order ?? 0,
       slots: Object.freeze([...(contribution.slots ?? [])]),
       hostState: contribution.hostState === true,
       hostMethods: Object.freeze([...(contribution.hostMethods ?? [])]),
       sessionAccess: contribution.sessionAccess === true,
-      clientCapabilities: Object.freeze([...(contribution.clientCapabilities ?? [])]),
       documentSha256: createHash('sha256').update(contribution.document).digest('hex'),
       token: Symbol(contribution.id),
     });
@@ -240,38 +220,6 @@ export function validateExtensionUiContribution(contribution: ExtensionUiContrib
   }
   if (!Number.isSafeInteger(contribution.priority) || Math.abs(contribution.priority) > 10_000) {
     throw new ExtensionUiContributionError('invalid_ui', 'UI priority is invalid');
-  }
-  if (
-    contribution.title !== undefined &&
-    (typeof contribution.title !== 'string' ||
-      !contribution.title.trim() ||
-      Buffer.byteLength(contribution.title, 'utf8') > 128)
-  ) {
-    throw new ExtensionUiContributionError('invalid_ui', 'UI contribution title is invalid');
-  }
-  if (
-    contribution.description !== undefined &&
-    (typeof contribution.description !== 'string' ||
-      Buffer.byteLength(contribution.description, 'utf8') > 4_096)
-  ) {
-    throw new ExtensionUiContributionError('invalid_ui', 'UI contribution description is invalid');
-  }
-  if (
-    contribution.order !== undefined &&
-    (!Number.isSafeInteger(contribution.order) || Math.abs(contribution.order) > 10_000)
-  ) {
-    throw new ExtensionUiContributionError('invalid_ui', 'UI contribution order is invalid');
-  }
-  if (
-    contribution.clientCapabilities !== undefined &&
-    (!Array.isArray(contribution.clientCapabilities) ||
-      contribution.clientCapabilities.some(
-        (capability) =>
-          !EXTENSION_UI_CLIENT_CAPABILITIES.includes(capability as ExtensionUiClientCapability),
-      ) ||
-      new Set(contribution.clientCapabilities).size !== contribution.clientCapabilities.length)
-  ) {
-    throw new ExtensionUiContributionError('invalid_ui', 'UI Client capabilities are invalid');
   }
   if (
     typeof contribution.document !== 'string' ||

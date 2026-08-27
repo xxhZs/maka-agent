@@ -98,13 +98,6 @@ test('user import previews, confirms, installs, and enables one trusted UI and E
       operation: 'extension.composition.mutate',
       input: { kind: 'reload', entryId: 'desktop-entry' },
     });
-    const rollback = handlers.get('ui-extensions:rollback');
-    assert.ok(rollback);
-    assert.deepEqual(await rollback({} as never, 'desktop-entry'), { ok: true, entry: null });
-    assert.deepEqual(requests.at(-1), {
-      operation: 'extension.composition.mutate',
-      input: { kind: 'rollback', entryId: 'desktop-entry' },
-    });
   } finally {
     await rm(root, { recursive: true, force: true });
   }

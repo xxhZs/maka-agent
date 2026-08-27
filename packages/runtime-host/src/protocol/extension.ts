@@ -1,9 +1,5 @@
 import { isCanonicalExtensionId, isCanonicalExtensionScopeId } from '@maka/runtime/plugin-runtime';
 import {
-  EXTENSION_UI_CLIENT_CAPABILITIES,
-  type ExtensionUiClientCapability,
-} from '@maka/runtime/extension-ui-contributions';
-import {
   requireEncodedByteLimit,
   requireEntityId,
   requireExactRecord,
@@ -162,16 +158,12 @@ export interface ExtensionUiContributionProjection {
   readonly slot?: string;
   readonly slots?: readonly string[];
   readonly priority: number;
-  readonly title?: string;
-  readonly description?: string;
-  readonly order?: number;
   readonly document: string;
   readonly documentSha256: string;
   readonly network: boolean;
   readonly hostState?: boolean;
   readonly hostMethods?: readonly string[];
   readonly sessionAccess?: boolean;
-  readonly clientCapabilities?: readonly import('@maka/runtime/extension-ui-contributions').ExtensionUiClientCapability[];
 }
 
 export interface ExtensionUiSnapshotResult {
@@ -250,7 +242,6 @@ export type ExtensionCompositionMutateInput =
     }
   | { readonly kind: 'disable'; readonly entryId: string }
   | { readonly kind: 'reload'; readonly entryId: string }
-  | { readonly kind: 'rollback'; readonly entryId: string }
   | { readonly kind: 'remove'; readonly entryId: string };
 
 export interface ExtensionCompositionMutateResult {
@@ -470,6 +461,7 @@ export function decodeExtensionConfigurationMutateInput(
 ): ExtensionConfigurationMutateInput {
   const input = requireExactRecord(value, 'extension configuration mutation input', [
     'entryId',
+    'scopeId',
     'configuration',
   ]);
   return {
@@ -492,13 +484,10 @@ export function decodeExtensionUiSnapshotResult(value: unknown): ExtensionUiSnap
   if (!Array.isArray(result.contributions) || result.contributions.length > 64) {
     throw invalidProtocolFrame('Invalid extension UI contributions');
   }
-  const scopeId = decodeExtensionScopeId(result.scopeId, 'extension UI scopeId');
   const decoded = {
-    scopeId,
+    scopeId: decodeExtensionScopeId(result.scopeId, 'extension UI scopeId'),
     digest: requireUtf8String(result.digest, 'extension UI digest', 128),
-    contributions: result.contributions.map((item) =>
-      decodeUiContributionProjection(item, scopeId),
-    ),
+    contributions: result.contributions.map(decodeUiContributionProjection),
   };
   requireEncodedByteLimit(decoded, 'extension UI snapshot result', 2 * 1024 * 1024);
   return decoded;
@@ -713,14 +702,10 @@ export function decodeExtensionCompositionMutateInput(
         entryId: requireEntityId(input.entryId, 'extension entryId'),
       };
     }
-    case 'reload':
-    case 'rollback': {
-      const input = requireExactRecord(record, `extension ${record.kind} input`, [
-        'kind',
-        'entryId',
-      ]);
+    case 'reload': {
+      const input = requireExactRecord(record, 'extension reload input', ['kind', 'entryId']);
       return {
-        kind: record.kind,
+        kind: 'reload',
         entryId: requireEntityId(input.entryId, 'extension entryId'),
       };
     }
@@ -1069,13 +1054,9 @@ function decodeConfigurationValues(
   return result;
 }
 
-function decodeUiContributionProjection(
-  value: unknown,
-  inheritedScopeId: string,
-): ExtensionUiContributionProjection {
+function decodeUiContributionProjection(value: unknown): ExtensionUiContributionProjection {
   const candidate = value as Record<string, unknown> | null;
   const fields = [
-    ...(candidate && Object.hasOwn(candidate, 'scopeId') ? ['scopeId'] : []),
     'entryId',
     'extensionId',
     'generation',
@@ -1090,10 +1071,6 @@ function decodeUiContributionProjection(
     ...(candidate && Object.hasOwn(candidate, 'sessionAccess') ? ['sessionAccess'] : []),
     ...(candidate && Object.hasOwn(candidate, 'slot') ? ['slot'] : []),
     ...(candidate && Object.hasOwn(candidate, 'slots') ? ['slots'] : []),
-    ...(candidate && Object.hasOwn(candidate, 'title') ? ['title'] : []),
-    ...(candidate && Object.hasOwn(candidate, 'description') ? ['description'] : []),
-    ...(candidate && Object.hasOwn(candidate, 'order') ? ['order'] : []),
-    ...(candidate && Object.hasOwn(candidate, 'clientCapabilities') ? ['clientCapabilities'] : []),
   ];
   const item = requireExactRecord(value, 'extension UI contribution', fields);
   if (
@@ -1136,10 +1113,7 @@ function decodeUiContributionProjection(
     throw invalidProtocolFrame('Invalid extension UI Host methods');
   }
   return {
-    scopeId:
-      item.scopeId === undefined
-        ? inheritedScopeId
-        : decodeExtensionScopeId(item.scopeId, 'extension UI scopeId'),
+    scopeId: decodeExtensionScopeId(item.scopeId, 'extension UI scopeId'),
     entryId: requireEntityId(item.entryId, 'extension entryId'),
     extensionId: decodeExtensionId(item.extensionId),
     generation: decodeGeneration(item.generation),
@@ -1148,13 +1122,6 @@ function decodeUiContributionProjection(
     ...(item.slot === undefined ? {} : { slot: item.slot as string }),
     ...(item.slots === undefined ? {} : { slots: item.slots as string[] }),
     priority: item.priority as number,
-    ...(item.title === undefined
-      ? {}
-      : { title: requireUtf8String(item.title, 'extension UI title', 128) }),
-    ...(item.description === undefined
-      ? {}
-      : { description: decodeOptionalDescription(item.description) }),
-    ...(item.order === undefined ? {} : { order: decodeUiOrder(item.order) }),
     document: requireUtf8String(item.document, 'extension UI document', 1024 * 1024),
     documentSha256: requireUtf8String(item.documentSha256, 'extension UI document digest', 128),
     network: decodeBoolean(item.network, 'extension UI network capability'),
@@ -1176,9 +1143,6 @@ function decodeUiContributionProjection(
             'extension UI Session access capability',
           ),
         }),
-    ...(item.clientCapabilities === undefined
-      ? {}
-      : { clientCapabilities: decodeUiClientCapabilities(item.clientCapabilities) }),
   };
 }
 
@@ -1239,31 +1203,6 @@ function decodeGeneration(value: unknown): number {
   if (!Number.isSafeInteger(value) || (value as number) <= 0)
     throw invalidProtocolFrame('Invalid extension Fiber generation');
   return value as number;
-}
-
-function decodeUiOrder(value: unknown): number {
-  if (!Number.isSafeInteger(value) || Math.abs(value as number) > 10_000)
-    throw invalidProtocolFrame('Invalid extension UI order');
-  return value as number;
-}
-
-function decodeOptionalDescription(value: unknown): string {
-  if (typeof value !== 'string' || Buffer.byteLength(value, 'utf8') > 4_096)
-    throw invalidProtocolFrame('Invalid extension UI description');
-  return value;
-}
-
-function decodeUiClientCapabilities(value: unknown): readonly ExtensionUiClientCapability[] {
-  if (!Array.isArray(value) || value.length > EXTENSION_UI_CLIENT_CAPABILITIES.length)
-    throw invalidProtocolFrame('Invalid extension UI Client capabilities');
-  const capabilities = value.map((item) => {
-    if (!EXTENSION_UI_CLIENT_CAPABILITIES.includes(item as ExtensionUiClientCapability))
-      throw invalidProtocolFrame('Invalid extension UI Client capability');
-    return item as ExtensionUiClientCapability;
-  });
-  if (new Set(capabilities).size !== capabilities.length)
-    throw invalidProtocolFrame('Repeated extension UI Client capability');
-  return capabilities;
 }
 
 function decodeExtensionId(value: unknown): string {

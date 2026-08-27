@@ -1,9 +1,7 @@
 import { posix } from 'node:path';
 import { isCanonicalExtensionId } from '@maka/runtime/plugin-runtime';
 import {
-  EXTENSION_UI_CLIENT_CAPABILITIES,
   EXTENSION_UI_SURFACES,
-  type ExtensionUiClientCapability,
   type ExtensionUiSurface,
 } from '@maka/runtime/extension-ui-contributions';
 
@@ -13,9 +11,6 @@ export interface UiPackageManifestContribution {
   readonly slot?: string;
   readonly slots: readonly string[];
   readonly priority: number;
-  readonly title: string;
-  readonly description: string;
-  readonly order: number;
   readonly document: string;
 }
 
@@ -38,7 +33,6 @@ export interface UiPackageManifest {
     readonly network: boolean;
     readonly hostState: boolean;
     readonly sessionAccess: boolean;
-    readonly clientCapabilities: readonly ExtensionUiClientCapability[];
   };
 }
 
@@ -106,9 +100,6 @@ export function decodeUiPackageManifest(value: unknown): UiPackageManifest {
       'document',
       ...(candidate && Object.hasOwn(candidate, 'slot') ? ['slot'] : []),
       ...(candidate && Object.hasOwn(candidate, 'slots') ? ['slots'] : []),
-      ...(candidate && Object.hasOwn(candidate, 'title') ? ['title'] : []),
-      ...(candidate && Object.hasOwn(candidate, 'description') ? ['description'] : []),
-      ...(candidate && Object.hasOwn(candidate, 'order') ? ['order'] : []),
     ]);
     const contributionId = boundedString(item.id, `ui[${index}].id`, 128);
     if (ids.has(contributionId))
@@ -148,15 +139,6 @@ export function decodeUiPackageManifest(value: unknown): UiPackageManifest {
       ...(item.slot === undefined ? {} : { slot: item.slot as string }),
       slots: Object.freeze((item.slots as string[] | undefined) ?? []),
       priority: item.priority as number,
-      title:
-        item.title === undefined
-          ? contributionId
-          : boundedString(item.title, `ui[${index}].title`, 128),
-      description:
-        item.description === undefined
-          ? ''
-          : boundedString(item.description, `ui[${index}].description`, 4_096, true),
-      order: item.order === undefined ? 0 : boundedInteger(item.order, `ui[${index}].order`),
       document: packagePath(item.document, `ui[${index}].document`),
     });
   });
@@ -168,9 +150,6 @@ export function decodeUiPackageManifest(value: unknown): UiPackageManifest {
   if (permissionRecord && Object.hasOwn(permissionRecord, 'sessionAccess')) {
     permissionKeys.push('sessionAccess');
   }
-  if (permissionRecord && Object.hasOwn(permissionRecord, 'clientCapabilities')) {
-    permissionKeys.push('clientCapabilities');
-  }
   const permissions = exactRecord(record.permissions, permissionKeys);
   if (typeof permissions.network !== 'boolean')
     throw invalidPackage('UI network permission is invalid');
@@ -181,16 +160,6 @@ export function decodeUiPackageManifest(value: unknown): UiPackageManifest {
   if (permissions.sessionAccess === true && !ui.some(({ surface }) => surface === 'app.root')) {
     throw invalidPackage('Only a complete app.root UI may request Session access');
   }
-  if (
-    permissions.clientCapabilities !== undefined &&
-    (!Array.isArray(permissions.clientCapabilities) ||
-      permissions.clientCapabilities.some(
-        (capability) =>
-          !EXTENSION_UI_CLIENT_CAPABILITIES.includes(capability as ExtensionUiClientCapability),
-      ) ||
-      new Set(permissions.clientCapabilities).size !== permissions.clientCapabilities.length)
-  )
-    throw invalidPackage('UI Client capabilities are invalid');
   const host = record.host === undefined ? undefined : decodeHost(record.host);
   return Object.freeze({
     schemaVersion: 1,
@@ -201,9 +170,6 @@ export function decodeUiPackageManifest(value: unknown): UiPackageManifest {
       network: permissions.network,
       hostState: permissions.hostState === true,
       sessionAccess: permissions.sessionAccess === true,
-      clientCapabilities: Object.freeze(
-        (permissions.clientCapabilities as ExtensionUiClientCapability[] | undefined) ?? [],
-      ),
     }),
   });
 }
@@ -252,26 +218,15 @@ function requireId(value: unknown): string {
   return id;
 }
 
-function boundedString(
-  value: unknown,
-  label: string,
-  maxBytes: number,
-  allowEmpty = false,
-): string {
+function boundedString(value: unknown, label: string, maxBytes: number): string {
   if (
     typeof value !== 'string' ||
-    (!allowEmpty && !value) ||
+    !value ||
     Buffer.byteLength(value, 'utf8') > maxBytes ||
     /[\r\n\0]/u.test(value)
   )
     throw invalidPackage(`UI package ${label} is invalid`);
   return value;
-}
-
-function boundedInteger(value: unknown, label: string): number {
-  if (!Number.isSafeInteger(value) || Math.abs(value as number) > 10_000)
-    throw invalidPackage(`UI package ${label} is invalid`);
-  return value as number;
 }
 
 function exactRecord(value: unknown, keys: readonly string[]): Record<string, unknown> {
