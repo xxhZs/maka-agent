@@ -17,6 +17,7 @@ export const EXTENSION_UI_OFFICIAL_SLOTS = Object.freeze([
   'sidebar.footer',
   'conversation.header',
   'settings.content',
+  'workspace.main',
 ] as const);
 
 const QUERY_ERRORS = [

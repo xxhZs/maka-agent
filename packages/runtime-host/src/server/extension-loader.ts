@@ -437,7 +437,9 @@ async function uiPackageInput(
               installed.manifest.host?.methods.map(({ name }) => name) ?? [],
             ),
             sessionAccess:
-              installed.manifest.permissions.sessionAccess && item.surface === 'app.root',
+              installed.manifest.permissions.sessionAccess &&
+              (item.surface === 'app.root' ||
+                (item.surface === 'app.slot' && item.slot === 'workspace.main')),
           }),
         ),
       ),

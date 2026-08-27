@@ -501,7 +501,10 @@ function runAgentBridgeRequest(
   },
   request: Extract<UiBridgeRequest, { kind: 'agent_invoke' }>,
 ): Promise<unknown> {
-  if (contribution.surface !== 'app.root' || contribution.sessionAccess !== true) {
+  const isAgentSurface =
+    contribution.surface === 'app.root' ||
+    (contribution.surface === 'app.slot' && contribution.slot === 'workspace.main');
+  if (!isAgentSurface || contribution.sessionAccess !== true) {
     throw new Error('This UI Extension has no Agent capability');
   }
   return invokeUiAgent(identity, request.method, request.input);
