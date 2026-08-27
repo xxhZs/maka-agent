@@ -53,6 +53,49 @@ test('Service isolation keeps sibling implementations independent', async () => 
   await root.fiber.dispose();
 });
 
+test('Service realms resolve App, Profile, Session, and Agent providers without cross-session leaks', async () => {
+  const root = new Context();
+  const profile = root.extend({ makaRootId: 'profile' });
+  const sessionA = root.extend({ makaRootId: 'session:a' });
+  const sessionB = root.extend({ makaRootId: 'session:b' });
+  const agentA = sessionA.extend({ makaAgentId: 'agent-a' });
+  root.provideService(
+    { name: 'fixture', role: 'core', permissions: [], isolate: true },
+    { value: 'app' },
+  );
+  profile.provideService(
+    { name: 'fixture', role: 'seam', permissions: ['profile'], isolate: true },
+    { value: 'profile' },
+  );
+  sessionA.provideService(
+    { name: 'fixture', role: 'seam', permissions: ['session'], isolate: true },
+    { value: 'session-a' },
+  );
+  agentA.provideService(
+    { name: 'fixture', role: 'seam', permissions: ['agent'], isolate: true },
+    { value: 'agent-a' },
+  );
+
+  assert.equal(root.get<{ value: string }>('fixture')?.value, 'app');
+  assert.equal(profile.get<{ value: string }>('fixture')?.value, 'profile');
+  assert.equal(sessionA.get<{ value: string }>('fixture')?.value, 'session-a');
+  assert.equal(sessionB.get<{ value: string }>('fixture')?.value, 'profile');
+  assert.equal(agentA.get<{ value: string }>('fixture')?.value, 'agent-a');
+
+  const consumer = sessionA.plugin({ name: 'fixture-consumer', inject: ['fixture'], apply() {} });
+  await consumer;
+  const [inspection] = sessionA.inspectServices().filter(({ name }) => name === 'fixture');
+  assert.equal(inspection?.role, 'seam');
+  assert.deepEqual(inspection?.permissions, ['session']);
+  assert.equal(inspection?.realm.id, 'session:a');
+  assert.equal(inspection?.provider.realm.id, 'session:a');
+  assert.deepEqual(
+    inspection?.consumers.map(({ fiberName, realm }) => [fiberName, realm.id]),
+    [['fixture-consumer', 'session:a']],
+  );
+  await root.fiber.dispose();
+});
+
 test('Fiber update preserves identity and disposes Effects in reverse order', async () => {
   const root = new Context();
   const lifecycle: string[] = [];
@@ -103,7 +146,10 @@ test('event dispatch supports emit, parallel, serial, bail, and waterfall', asyn
 
   root.on('waterfall', (value, next) => `outer(${String((next as () => unknown)())}:${value})`);
   root.on('waterfall', (value, next) => `inner(${String((next as () => unknown)())}:${value})`);
-  assert.equal(root.waterfall('waterfall', 'x', () => 'base'), 'outer(inner(base:x):x)');
+  assert.equal(
+    root.waterfall('waterfall', 'x', () => 'base'),
+    'outer(inner(base:x):x)',
+  );
   await root.fiber.dispose();
 });
 
@@ -114,9 +160,6 @@ test('intercept configuration is inherited without mutating parent Contexts', as
 
   assert.deepEqual(root.interceptConfig('fixture'), []);
   assert.deepEqual(child.interceptConfig('fixture'), [{ child: true }]);
-  assert.deepEqual(grandchild.interceptConfig('fixture'), [
-    { child: true },
-    { grandchild: true },
-  ]);
+  assert.deepEqual(grandchild.interceptConfig('fixture'), [{ child: true }, { grandchild: true }]);
   await root.fiber.dispose();
 });

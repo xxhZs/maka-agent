@@ -18,7 +18,12 @@ export class PluginHookService extends Service {
   readonly registry = new ExtensionEventContributionRegistry();
 
   constructor(ctx: Context) {
-    super(ctx, 'hooks');
+    super(ctx, {
+      name: 'hooks',
+      role: 'registry',
+      permissions: Object.freeze([]),
+      isolate: true,
+    });
   }
 
   define(definition: ExtensionEventDefinition): void {

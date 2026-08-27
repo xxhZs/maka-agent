@@ -37,7 +37,7 @@ test('admitted UI Agent bridge invokes the shared Host Agent Runtime', async () 
     packages,
   );
   const calls: unknown[] = [];
-  controller.setAgentRuntime({
+  controller.registerAgentProvider({
     invoke: async (method, input, context) => {
       calls.push({ method, input, extensionId: context.callerExtensionId, cwd: context.cwd });
       return [{ id: 'agent-1' }];
@@ -106,7 +106,7 @@ test('UI Agent bridge requires the existing Session access permission', async ()
     undefined,
     packages,
   );
-  controller.setAgentRuntime({
+  controller.registerAgentProvider({
     invoke: async () => assert.fail('denied UI request reached the Agent Runtime'),
     observe: () => () => undefined,
   });

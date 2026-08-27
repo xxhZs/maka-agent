@@ -1,6 +1,7 @@
 import { pathToFileURL } from 'node:url';
 import { randomUUID } from 'node:crypto';
 import type { MakaTool, MakaToolContext } from '@maka/runtime/tool-runtime';
+import type { Context } from '@maka/runtime/plugin-kernel';
 import { z } from 'zod';
 import type { ExtensionConfigurationScalar } from '../protocol/extension.js';
 import type { InstalledToolPackage } from './plugin-runtime-manifest.js';
@@ -108,6 +109,17 @@ export interface PackageAgentRuntime {
   ): () => void;
 }
 
+interface InitiatorAwarePackageAgentRuntime extends PackageAgentRuntime {
+  currentInitiator():
+    | (PackageInvocationContext & { readonly callerExtensionId: string })
+    | undefined;
+  requireInitiator(): PackageInvocationContext & { readonly callerExtensionId: string };
+  withInitiator<T>(
+    initiator: PackageInvocationContext & { readonly callerExtensionId: string },
+    operation: () => T,
+  ): T;
+}
+
 export interface PackageAgentHandle {
   readonly id: string;
   readonly sessionId: string;
@@ -162,6 +174,7 @@ type PackageHandler = (
 interface PackageModule {
   readonly default?: unknown;
   readonly tools?: unknown;
+  readonly activate?: (context: Context) => unknown | Promise<unknown>;
 }
 
 export class InProcessPackageError extends Error {
@@ -187,6 +200,7 @@ export class InProcessPackageActivation {
   readonly #invocations = new Set<Promise<unknown>>();
   readonly #agentObservers = new Set<() => void>();
   #handlersTask: Promise<Readonly<Record<string, PackageHandler>>> | undefined;
+  #activationCleanup: (() => void | Promise<void>) | undefined;
 
   constructor(
     readonly installedPackage: InstalledToolPackage,
@@ -196,6 +210,7 @@ export class InProcessPackageActivation {
     private readonly emitEvent?: PackageEventEmitter,
     private readonly callService?: PackageServiceCaller,
     private readonly agents?: PackageAgentRuntime,
+    private readonly pluginContext?: Context,
   ) {}
 
   tools(): readonly MakaTool[] {
@@ -267,6 +282,8 @@ export class InProcessPackageActivation {
     for (const dispose of this.#agentObservers) dispose();
     this.#agentObservers.clear();
     await Promise.allSettled([...this.#invocations]);
+    await this.#activationCleanup?.();
+    this.#activationCleanup = undefined;
   }
 
   async #invoke(
@@ -346,8 +363,10 @@ export class InProcessPackageActivation {
       },
       list: () => callAgentRuntime('list', {}),
       roots: () => callAgentRuntime('roots', {}),
-      currentInitiator: () => Object.freeze({ ...context }),
-      requireInitiator: () => Object.freeze({ ...context }),
+      currentInitiator: () =>
+        Object.freeze({ ...(initiatorRuntime(this.agents)?.currentInitiator() ?? agentContext) }),
+      requireInitiator: () =>
+        Object.freeze({ ...(initiatorRuntime(this.agents)?.requireInitiator() ?? agentContext) }),
       run: (input: PackageAgentRunInput) => callAgentRuntime('run', input),
       stop: (input: PackageAgentStopInput) => callAgentRuntime('stop', input),
     });
@@ -367,7 +386,11 @@ export class InProcessPackageActivation {
         });
       },
     });
-    const result = await handler(value, runtimeContext, next);
+    const invoke = () => handler(value, runtimeContext, next);
+    const scopedAgents = initiatorRuntime(this.agents);
+    const result = await (scopedAgents
+      ? scopedAgents.withInitiator(agentContext, invoke)
+      : invoke());
     if (context.abortSignal.aborted) {
       throw new InProcessPackageError(
         'aborted',
@@ -382,7 +405,12 @@ export class InProcessPackageActivation {
 
   #handlers(): Promise<Readonly<Record<string, PackageHandler>>> {
     this.#assertActive();
-    this.#handlersTask ??= loadHandlers(this.installedPackage.entry);
+    this.#handlersTask ??= loadHandlers(this.installedPackage.entry, this.pluginContext).then(
+      ({ handlers, cleanup }) => {
+        this.#activationCleanup = cleanup;
+        return handlers;
+      },
+    );
     return this.#handlersTask;
   }
 
@@ -392,7 +420,29 @@ export class InProcessPackageActivation {
   }
 }
 
-async function loadHandlers(entry: string): Promise<Readonly<Record<string, PackageHandler>>> {
+function initiatorRuntime(
+  runtime: PackageAgentRuntime | undefined,
+): InitiatorAwarePackageAgentRuntime | undefined {
+  if (
+    runtime &&
+    typeof (runtime as Partial<InitiatorAwarePackageAgentRuntime>).currentInitiator ===
+      'function' &&
+    typeof (runtime as Partial<InitiatorAwarePackageAgentRuntime>).requireInitiator ===
+      'function' &&
+    typeof (runtime as Partial<InitiatorAwarePackageAgentRuntime>).withInitiator === 'function'
+  ) {
+    return runtime as InitiatorAwarePackageAgentRuntime;
+  }
+  return undefined;
+}
+
+async function loadHandlers(
+  entry: string,
+  context?: Context,
+): Promise<{
+  readonly handlers: Readonly<Record<string, PackageHandler>>;
+  readonly cleanup?: () => void | Promise<void>;
+}> {
   let imported: PackageModule;
   try {
     const url = pathToFileURL(entry);
@@ -403,6 +453,23 @@ async function loadHandlers(entry: string): Promise<Readonly<Record<string, Pack
       cause: error,
     });
   }
+  let cleanup: (() => void | Promise<void>) | undefined;
+  if (imported.activate) {
+    if (!context) {
+      throw new InProcessPackageError(
+        'load_failed',
+        'Extension activate() requires a scoped Maka Context',
+      );
+    }
+    const result = await imported.activate(context);
+    if (result !== undefined && typeof result !== 'function') {
+      throw new InProcessPackageError(
+        'load_failed',
+        'Extension activate() must return a disposer or undefined',
+      );
+    }
+    cleanup = result as (() => void | Promise<void>) | undefined;
+  }
   const handlers = imported.default ?? imported.tools;
   if (!handlers || typeof handlers !== 'object' || Array.isArray(handlers)) {
     throw new InProcessPackageError(
@@ -410,7 +477,10 @@ async function loadHandlers(entry: string): Promise<Readonly<Record<string, Pack
       'Extension entry must export a default handler object',
     );
   }
-  return handlers as Readonly<Record<string, PackageHandler>>;
+  return {
+    handlers: handlers as Readonly<Record<string, PackageHandler>>,
+    ...(cleanup ? { cleanup } : {}),
+  };
 }
 
 function requireHandler(

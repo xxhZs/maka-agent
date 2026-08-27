@@ -19,6 +19,8 @@ import {
 import { assembleMainSessionSystemPrompt } from '@maka/runtime/system-prompt/main-session-prompt';
 import { buildAskUserQuestionTool } from '@maka/runtime/ask-user-question-tool';
 import { buildBuiltinTools, type BuildBuiltinToolsOptions } from '@maka/runtime/builtin-tools';
+import type { FilesystemExecutor } from '@maka/runtime/filesystem-executor';
+import type { ShellRunLauncher } from '@maka/runtime/shell-tools';
 import {
   buildCancelPlanTool,
   buildSubmitPlanTool,
@@ -112,6 +114,10 @@ export interface InteractiveRunComposerInput {
   readonly deepResearch?: {
     readonly tools: readonly MakaTool[];
   };
+  readonly renderSystemPrompt?: (
+    phase: 'system' | 'turn_tail',
+    context: HostModelPromptContext,
+  ) => Promise<readonly string[]>;
 }
 
 /** Composes one Interactive prompt and tool surface from canonical Host authorities. */
@@ -193,8 +199,9 @@ export function createInteractiveRunComposer(input: InteractiveRunComposerInput)
     const pending = Promise.all([
       readPromptState(input, context.sessionId, Boolean(childInstruction)),
       inventorySnapshotFor(context),
+      input.renderSystemPrompt?.('system', context) ?? [],
     ])
-      .then(async ([promptState, inventory]) => {
+      .then(async ([promptState, inventory, extensionFragments]) => {
         const skills = buildSkillsPromptFragmentFromInventoryWithReport(
           inventory.inventory,
           productSurface.hostCapabilities,
@@ -233,6 +240,7 @@ export function createInteractiveRunComposer(input: InteractiveRunComposerInput)
                   })
                 : undefined,
               input.sideConversation ? buildSideConversationSystemPromptFragment() : undefined,
+              ...extensionFragments,
             ]);
         return Object.freeze({
           text,
@@ -276,6 +284,7 @@ export function createInteractiveRunComposer(input: InteractiveRunComposerInput)
           includeArchived: false,
         }),
       );
+      const extensionFragments = (await input.renderSystemPrompt?.('turn_tail', context)) ?? [];
       return (
         joinFragments([
           environment,
@@ -287,6 +296,7 @@ export function createInteractiveRunComposer(input: InteractiveRunComposerInput)
                 input.plan.permissionMode === 'bypass',
               )
             : undefined,
+          ...extensionFragments,
         ]) ?? environment
       );
     },
@@ -320,6 +330,13 @@ export interface InteractiveRunComposerFactoryInput
   readonly worktreePatchWriteBackAvailable?: boolean;
   readonly planStore?: PlanStore;
   readonly deepResearchTools?: readonly MakaTool[];
+  readonly resolveFilesystem?: (sessionId: string, base: FilesystemExecutor) => FilesystemExecutor;
+  readonly resolveShell?: (sessionId: string, base: ShellRunLauncher) => ShellRunLauncher;
+  readonly renderScopedSystemPrompt?: (
+    sessionId: string,
+    phase: 'system' | 'turn_tail',
+    context: HostModelPromptContext,
+  ) => Promise<readonly string[]>;
 }
 
 export function createInteractiveRunComposerFactory(
@@ -374,6 +391,30 @@ export function createInteractiveRunComposerFactory(
             }),
           })
         : input.parentAgentTools;
+      const builtinTools =
+        input.builtinTools && (input.resolveFilesystem || input.resolveShell)
+          ? {
+              ...input.builtinTools,
+              ...(input.resolveFilesystem
+                ? {
+                    filesystemTransform: (base: FilesystemExecutor) =>
+                      input.resolveFilesystem!(
+                        backendContext.sessionId,
+                        input.builtinTools?.filesystemTransform?.(base) ?? base,
+                      ),
+                  }
+                : {}),
+              ...(input.resolveShell
+                ? {
+                    shellRunsTransform: (base: ShellRunLauncher) =>
+                      input.resolveShell!(
+                        backendContext.sessionId,
+                        input.builtinTools?.shellRunsTransform?.(base) ?? base,
+                      ),
+                  }
+                : {}),
+            }
+          : input.builtinTools;
       const composer = createInteractiveRunComposer({
         runtimePolicy,
         skills: input.skills,
@@ -392,7 +433,7 @@ export function createInteractiveRunComposerFactory(
             }
           : {}),
         ...(clientCapabilities ? { clientCapabilities } : {}),
-        ...(input.builtinTools ? { builtinTools: input.builtinTools } : {}),
+        ...(builtinTools ? { builtinTools } : {}),
         ...(hostTools.length > 0 ? { hostTools } : {}),
         ...(input.scheduledTaskTool ? { scheduledTaskTool: input.scheduledTaskTool } : {}),
         ...(input.goalTools ? { goalTools: input.goalTools } : {}),
@@ -411,6 +452,12 @@ export function createInteractiveRunComposerFactory(
           ? { deepResearch: { tools: requireDeepResearchTools(input.deepResearchTools) } }
           : {}),
         skillBudget: contextWindow === null ? {} : { contextWindow },
+        ...(input.renderScopedSystemPrompt
+          ? {
+              renderSystemPrompt: (phase, promptContext) =>
+                input.renderScopedSystemPrompt!(backendContext.sessionId, phase, promptContext),
+            }
+          : {}),
       });
       return Object.freeze({
         ...composer,

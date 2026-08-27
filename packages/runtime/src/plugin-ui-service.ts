@@ -18,7 +18,12 @@ export class PluginUiService extends Service {
   readonly registry = new ExtensionUiContributionRegistry();
 
   constructor(ctx: Context) {
-    super(ctx, 'ui');
+    super(ctx, {
+      name: 'ui',
+      role: 'registry',
+      permissions: Object.freeze(['hostState']),
+      isolate: true,
+    });
   }
 
   register(contribution: ExtensionUiContribution): void {

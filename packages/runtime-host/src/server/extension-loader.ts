@@ -1,4 +1,5 @@
 import { isCanonicalExtensionId } from '@maka/runtime/plugin-runtime';
+import type { Context } from '@maka/runtime/plugin-kernel';
 import type {
   ExtensionConfigurationScalar,
   ExtensionPackageContractProjection,
@@ -77,7 +78,6 @@ export interface HostTrustedToolExtensionLoader {
   setUiStatePublisher?(
     publisher: (extensionId: string, key: string, value: unknown) => Promise<void>,
   ): void;
-  setAgentRuntime?(runtime: PackageAgentRuntime): void;
 }
 
 /**
@@ -186,7 +186,6 @@ export class InstalledPluginPackageLoader implements HostTrustedToolExtensionLoa
   };
   #publishUiState: (extensionId: string, key: string, value: unknown) => Promise<void> = async () =>
     undefined;
-  #agents: PackageAgentRuntime | undefined;
 
   constructor(
     private readonly statics: StaticTrustedToolExtensionLoader,
@@ -226,10 +225,6 @@ export class InstalledPluginPackageLoader implements HostTrustedToolExtensionLoa
     publisher: (extensionId: string, key: string, value: unknown) => Promise<void>,
   ): void {
     this.#publishUiState = publisher;
-  }
-
-  setAgentRuntime(runtime: PackageAgentRuntime): void {
-    this.#agents = runtime;
   }
 
   async list(): Promise<readonly TrustedExtensionProjection[]> {
@@ -275,7 +270,6 @@ export class InstalledPluginPackageLoader implements HostTrustedToolExtensionLoa
       emitEvent: (...args) => this.#emitEvent(...args),
       callService: (...args) => this.#callService(...args),
       publishUiState: (...args) => this.#publishUiState(...args),
-      agents: this.#agents,
     });
   }
 
@@ -413,8 +407,11 @@ async function uiPackageInput(
   },
   installed: InstalledUiPackage,
   metadata?: ExtensionPackageManifest,
-): Promise<HostUiExtensionInput> {
-  const service = new UiPackageService();
+): Promise<
+  Omit<HostUiExtensionInput, 'healthCheck'> & {
+    readonly healthCheck: (agents?: PackageAgentRuntime, context?: Context) => Promise<void>;
+  }
+> {
   return Object.freeze({
     extensionId: installed.extensionId,
     ...(metadata?.dependencies.length
@@ -445,7 +442,11 @@ async function uiPackageInput(
         ),
       ),
     ),
-    healthCheck: () => service.healthCheck(installed),
+    healthCheck: (agents?: PackageAgentRuntime, context?: Context) =>
+      new UiPackageService(
+        () => agents,
+        () => context,
+      ).healthCheck(installed),
   });
 }
 
@@ -513,7 +514,6 @@ async function combinedPackageInput(input: {
     context: ExtensionServiceInvocationContext,
   ) => Promise<unknown>;
   readonly publishUiState: (extensionId: string, key: string, value: unknown) => Promise<void>;
-  readonly agents?: PackageAgentRuntime;
 }): Promise<HostPreparedPluginPackageInput> {
   const installed = input.tool ?? input.ui?.installed ?? input.event;
   if (!installed) throw new HostExtensionLoaderError('not_found', 'Extension package is missing');
@@ -557,6 +557,7 @@ async function combinedPackageInput(input: {
         }
       : {}),
     load: async (context: Parameters<HostPreparedPluginPackageInput['load']>[0]) => {
+      const agents = context.runtimeContext.get<PackageAgentRuntime>('agents');
       const configuration = configurationFor(context.entryId);
       const emitEvent = (
         event: string,
@@ -604,7 +605,8 @@ async function combinedPackageInput(input: {
             configuration,
             emitEvent,
             callService,
-            input.agents,
+            agents,
+            context.runtimeContext,
           )
         : undefined;
       const eventActivation = input.event
@@ -613,8 +615,9 @@ async function combinedPackageInput(input: {
             configuration,
             emitEvent,
             callService,
-            input.agents,
+            agents,
             toolActivation,
+            context.runtimeContext,
           )
         : undefined;
       return {
@@ -645,7 +648,7 @@ async function combinedPackageInput(input: {
           await toolActivation?.healthCheck(
             input.tool?.manifest.tools.map(({ handler }) => handler) ?? [],
           );
-          await uiInput?.healthCheck?.();
+          await uiInput?.healthCheck?.(agents, context.runtimeContext);
           await eventActivation?.healthCheck();
         },
         dispose: async () => {

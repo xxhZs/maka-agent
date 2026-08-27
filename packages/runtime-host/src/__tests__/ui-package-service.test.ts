@@ -5,14 +5,14 @@ import { UiPackageService } from '../server/ui-package-service.js';
 
 test('UI Agent bridge delegates to the shared Package Agent Runtime', async () => {
   const calls: unknown[] = [];
-  const service = new UiPackageService();
-  service.setAgentRuntime({
+  const runtime = {
     invoke: async (method, input, context) => {
       calls.push({ method, input, context: invocationProjection(context) });
       return method === 'list' ? [{ id: 'agent-1' }] : undefined;
     },
     observe: () => () => undefined,
-  });
+  } satisfies import('../server/in-process-package-runtime.js').PackageAgentRuntime;
+  const service = new UiPackageService(() => runtime);
   const installed = {
     extensionId: 'dev.maka.dashboard',
     root: '/extensions/dashboard',
@@ -63,11 +63,11 @@ test('UI Agent bridge delegates to the shared Package Agent Runtime', async () =
 });
 
 test('UI Agent bridge rejects unknown methods before reaching the Runtime', async () => {
-  const service = new UiPackageService();
-  service.setAgentRuntime({
+  const runtime = {
     invoke: async () => assert.fail('invalid method reached the Agent Runtime'),
     observe: () => () => undefined,
-  });
+  } satisfies import('../server/in-process-package-runtime.js').PackageAgentRuntime;
+  const service = new UiPackageService(() => runtime);
   await assert.rejects(
     service.invokeAgent(
       { extensionId: 'dev.maka.dashboard', root: '/extensions/dashboard' } as never,

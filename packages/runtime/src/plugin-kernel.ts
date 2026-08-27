@@ -20,7 +20,9 @@ export interface EffectMeta {
 
 export interface StandardSchema {
   readonly '~standard': {
-    validate(value: unknown):
+    validate(
+      value: unknown,
+    ):
       | { readonly value: unknown; readonly issues?: undefined }
       | { readonly issues: readonly { readonly message: string }[] }
       | Promise<
@@ -30,10 +32,7 @@ export interface StandardSchema {
   };
 }
 
-export type Plugin<T = unknown> =
-  | Plugin.Function<T>
-  | Plugin.Constructor<T>
-  | Plugin.Object<T>;
+export type Plugin<T = unknown> = Plugin.Function<T> | Plugin.Constructor<T> | Plugin.Object<T>;
 
 export namespace Plugin {
   export interface Base {
@@ -60,8 +59,56 @@ interface ServiceImplementation {
   readonly name: string;
   readonly label: symbol;
   readonly fiber: Fiber;
+  readonly context: Context;
+  readonly definition: ServiceDefinition;
   value: unknown;
   readonly check?: () => boolean;
+}
+
+export type ServiceRole = 'core' | 'registry' | 'seam';
+
+export interface ServiceDefinition {
+  readonly name: string;
+  readonly role: ServiceRole;
+  readonly permissions: readonly string[];
+  readonly isolate: boolean;
+}
+
+export interface ServiceRealmInspection {
+  readonly id: string;
+  readonly kind: 'app' | 'profile' | 'desktop' | 'session' | 'agent';
+  readonly parentId?: string;
+}
+
+export interface ServiceEndpointInspection {
+  readonly fiberId: number;
+  readonly fiberName: string;
+  readonly fiberState: FiberState;
+  readonly realm: ServiceRealmInspection;
+}
+
+export interface ServiceRegistrationInspection extends ServiceEndpointInspection {
+  readonly id: string;
+  readonly priority?: number;
+}
+
+export interface ServiceInspection {
+  readonly name: string;
+  readonly role: ServiceRole;
+  readonly permissions: readonly string[];
+  readonly realm: ServiceRealmInspection;
+  readonly provider: ServiceEndpointInspection;
+  readonly consumers: readonly ServiceEndpointInspection[];
+  readonly registrations: readonly ServiceRegistrationInspection[];
+  readonly ownerFiberId: number;
+  readonly ownerFiberName: string;
+  readonly ownerFiberState: FiberState;
+  readonly isolated: boolean;
+}
+
+export interface ServiceValueInspection<T = unknown> {
+  readonly service: ServiceInspection;
+  readonly value: T;
 }
 
 interface Hook {
@@ -85,7 +132,7 @@ interface PluginRuntime {
 
 interface KernelState {
   readonly root: Context;
-  readonly services: Map<symbol, ServiceImplementation>;
+  readonly services: Map<symbol, ServiceImplementation[]>;
   readonly serviceLabels: Map<string, symbol>;
   readonly runtimes: Map<Function, PluginRuntime>;
   readonly listeners: Map<PropertyKey, Hook[]>;
@@ -196,6 +243,12 @@ export class Context {
     ) as this;
   }
 
+  /** Creates an independently disposable child lifecycle scope. */
+  scope(name: string, meta: object = {}): this {
+    this.#assertOpen();
+    return Fiber.scope(this, name, meta).ctx as this;
+  }
+
   isolate(name: string, label = Symbol(name)): this {
     validateServiceName(name);
     return new Context(
@@ -240,10 +293,12 @@ export class Context {
             onFulfilled?: ((value: Fiber) => TResult1 | PromiseLike<TResult1>) | null,
             onRejected?: ((reason: unknown) => TResult2 | PromiseLike<TResult2>) | null,
           ): PromiseLike<TResult1 | TResult2> =>
-            target.await().then(
-              () => (onFulfilled ? onFulfilled(target) : (target as unknown as TResult1)),
-              onRejected ?? undefined,
-            );
+            target
+              .await()
+              .then(
+                () => (onFulfilled ? onFulfilled(target) : (target as unknown as TResult1)),
+                onRejected ?? undefined,
+              );
         }
         const value = Reflect.get(target, property, receiver);
         return typeof value === 'function' ? value.bind(target) : value;
@@ -260,27 +315,50 @@ export class Context {
   }
 
   provide(name: string, value?: unknown, check?: () => boolean): Disposable<Promise<void>> {
+    return this.provideService(
+      { name, role: 'core', permissions: Object.freeze([]), isolate: true },
+      value,
+      check,
+    );
+  }
+
+  provideService(
+    definition: ServiceDefinition,
+    value?: unknown,
+    check?: () => boolean,
+  ): Disposable<Promise<void>> {
+    validateServiceDefinition(definition);
+    const name = definition.name;
     validateServiceName(name);
     const label = this.#label(name);
-    if (this.#kernel.services.has(label)) {
+    const implementations = this.#kernel.services.get(label) ?? [];
+    if (implementations.some(({ context }) => this.sameServiceRealm(context, name))) {
       throw new Error(`Service is already provided in this scope: ${name}`);
     }
-    return this.effect(() => {
-      const implementation: ServiceImplementation = {
-        name,
-        label,
-        value,
-        fiber: this.fiber,
-        check,
-      };
-      this.#kernel.services.set(label, implementation);
-      this.#notifyService(name, label);
-      return async () => {
-        if (this.#kernel.services.get(label) !== implementation) return;
-        this.#kernel.services.delete(label);
-        await Promise.allSettled(this.#notifyService(name, label).map((fiber) => fiber.await()));
-      };
-    }, `ctx.provide(${JSON.stringify(name)})`);
+    return this.effect(
+      () => {
+        const implementation: ServiceImplementation = {
+          name,
+          label,
+          value,
+          fiber: this.fiber,
+          context: this,
+          definition: freezeServiceDefinition(definition),
+          check,
+        };
+        implementations.push(implementation);
+        this.#kernel.services.set(label, implementations);
+        this.#notifyService(name, label);
+        return async () => {
+          const index = implementations.indexOf(implementation);
+          if (index < 0) return;
+          implementations.splice(index, 1);
+          if (implementations.length === 0) this.#kernel.services.delete(label);
+          await Promise.allSettled(this.#notifyService(name, label).map((fiber) => fiber.await()));
+        };
+      },
+      `ctx.provide(${JSON.stringify(name)})`,
+    );
   }
 
   get<T = unknown>(name: string, strict = true): T | undefined {
@@ -288,9 +366,11 @@ export class Context {
     if (!implementation) return undefined;
     if (strict && implementation.fiber.state !== FiberState.ACTIVE) return undefined;
     if (implementation.check && !implementation.check.call(implementation.value)) return undefined;
-    return (implementation.value instanceof Service
-      ? implementation.value._bind(this.#proxy)
-      : implementation.value) as T;
+    return (
+      implementation.value instanceof Service
+        ? implementation.value._bind(this.#proxy)
+        : implementation.value
+    ) as T;
   }
 
   set(name: string, value: unknown): boolean {
@@ -311,17 +391,24 @@ export class Context {
       readonly set?: (this: Context, value: unknown, receiver: unknown) => boolean;
     },
   ): Disposable<Promise<void>> {
-    if (this.#kernel.accessors.has(name)) throw new Error(`Context property already exists: ${name}`);
-    return this.effect(() => {
-      const accessor = { owner: this.fiber, ...options };
-      this.#kernel.accessors.set(name, accessor);
-      return () => {
-        if (this.#kernel.accessors.get(name) === accessor) this.#kernel.accessors.delete(name);
-      };
-    }, `ctx.accessor(${JSON.stringify(name)})`);
+    if (this.#kernel.accessors.has(name))
+      throw new Error(`Context property already exists: ${name}`);
+    return this.effect(
+      () => {
+        const accessor = { owner: this.fiber, ...options };
+        this.#kernel.accessors.set(name, accessor);
+        return () => {
+          if (this.#kernel.accessors.get(name) === accessor) this.#kernel.accessors.delete(name);
+        };
+      },
+      `ctx.accessor(${JSON.stringify(name)})`,
+    );
   }
 
-  mixin(source: string | object, names: readonly string[] | Readonly<Record<string, string>>): void {
+  mixin(
+    source: string | object,
+    names: readonly string[] | Readonly<Record<string, string>>,
+  ): void {
     const entries = Array.isArray(names)
       ? names.map((name) => [name, name] as const)
       : Object.entries(names);
@@ -415,7 +502,8 @@ export class Context {
   waterfall(...input: unknown[]): unknown {
     const { hooks, args } = this.#dispatch(input);
     const terminal = args.pop();
-    if (typeof terminal !== 'function') throw new TypeError('Waterfall requires a terminal callback');
+    if (typeof terminal !== 'function')
+      throw new TypeError('Waterfall requires a terminal callback');
     const callbacks = hooks.map(({ listener }) => listener);
     const next = (): unknown => {
       const callback = callbacks.shift() ?? terminal;
@@ -432,7 +520,109 @@ export class Context {
     return Object.freeze([...this.#kernel.fibers]);
   }
 
-  #dispatch(input: readonly unknown[]): { readonly hooks: readonly Hook[]; readonly args: unknown[] } {
+  serviceRealm(): ServiceRealmInspection {
+    const rootId = inheritedOwnString(this, 'makaRootId');
+    const agentId = inheritedOwnString(this, 'makaAgentId');
+    if (agentId) {
+      const parentId = rootId ?? 'app';
+      return Object.freeze({ id: `${parentId}/agent:${agentId}`, kind: 'agent', parentId });
+    }
+    if (rootId === 'profile')
+      return Object.freeze({ id: 'profile', kind: 'profile', parentId: 'app' });
+    if (rootId === 'desktop-ui') {
+      return Object.freeze({ id: 'desktop-ui', kind: 'desktop', parentId: 'app' });
+    }
+    if (rootId?.startsWith('session:')) {
+      return Object.freeze({ id: rootId, kind: 'session', parentId: 'app' });
+    }
+    return Object.freeze({ id: 'app', kind: 'app' });
+  }
+
+  serviceSpecificity(provider: Context, name: string): number {
+    if (this.#label(name) !== provider._label(name)) return -1;
+    const consumerRealm = this.serviceRealm();
+    const providerRealm = provider.serviceRealm();
+    if (providerRealm.kind === 'app') return 0;
+    if (providerRealm.kind === 'profile') return consumerRealm.kind === 'app' ? -1 : 1;
+    if (providerRealm.kind === 'desktop') {
+      return consumerRealm.kind === 'desktop' && consumerRealm.id === providerRealm.id ? 2 : -1;
+    }
+    if (providerRealm.kind === 'session') {
+      return consumerRealm.id === providerRealm.id || consumerRealm.parentId === providerRealm.id
+        ? 2
+        : -1;
+    }
+    return consumerRealm.id === providerRealm.id ? 3 : -1;
+  }
+
+  canAccessService(provider: Context, name: string): boolean {
+    return this.serviceSpecificity(provider, name) >= 0;
+  }
+
+  sameServiceRealm(other: Context, name: string): boolean {
+    return (
+      this.#label(name) === other._label(name) && this.serviceRealm().id === other.serviceRealm().id
+    );
+  }
+
+  /** Services visible from this exact Context, including its isolation realm. */
+  inspectServices(): readonly ServiceInspection[] {
+    const visible: ServiceInspection[] = [];
+    const names = new Set(
+      [...this.#kernel.services.values()].flatMap((implementations) =>
+        implementations.map(({ name }) => name),
+      ),
+    );
+    for (const name of names) {
+      const implementation = this.#implementation(name);
+      if (!implementation) continue;
+      if (implementation.fiber.state !== FiberState.ACTIVE) continue;
+      if (implementation.check && !implementation.check.call(implementation.value)) continue;
+      const provider = endpointInspection(implementation.fiber, implementation.context);
+      const consumers = [...this.#kernel.fibers]
+        .filter(
+          (fiber) =>
+            fiber.requires(name) && this.#implementationFor(fiber.ctx, name) === implementation,
+        )
+        .map((fiber) => endpointInspection(fiber, fiber.ctx))
+        .sort(compareServiceEndpoint);
+      const registrations =
+        implementation.value instanceof Service
+          ? implementation.value._bind(this.#proxy)._inspectRegistrations()
+          : Object.freeze([]);
+      visible.push(
+        Object.freeze({
+          name,
+          role: implementation.definition.role,
+          permissions: implementation.definition.permissions,
+          realm: this.serviceRealm(),
+          provider,
+          consumers: Object.freeze(consumers),
+          registrations,
+          ownerFiberId: implementation.fiber.id,
+          ownerFiberName: implementation.fiber.name,
+          ownerFiberState: implementation.fiber.state,
+          isolated: this.#kernel.serviceLabels.get(name) !== implementation.label,
+        }),
+      );
+    }
+    return Object.freeze(visible.sort((left, right) => left.name.localeCompare(right.name)));
+  }
+
+  inspectServiceValues<T = unknown>(prefix = ''): readonly ServiceValueInspection<T>[] {
+    return Object.freeze(
+      this.inspectServices().flatMap((service) => {
+        if (!service.name.startsWith(prefix)) return [];
+        const value = this.get<T>(service.name);
+        return value === undefined ? [] : [Object.freeze({ service, value })];
+      }),
+    );
+  }
+
+  #dispatch(input: readonly unknown[]): {
+    readonly hooks: readonly Hook[];
+    readonly args: unknown[];
+  } {
     const args = [...input];
     const thisArg = Context.is(args[0]) ? (args.shift() as Context) : undefined;
     const name = args.shift();
@@ -447,7 +637,18 @@ export class Context {
   }
 
   #implementation(name: string): ServiceImplementation | undefined {
-    return this.#kernel.services.get(this.#label(name));
+    return this.#implementationFor(this, name);
+  }
+
+  #implementationFor(context: Context, name: string): ServiceImplementation | undefined {
+    const implementations = this.#kernel.services.get(context._label(name)) ?? [];
+    return implementations
+      .map((implementation) => ({
+        implementation,
+        specificity: context.serviceSpecificity(implementation.context, name),
+      }))
+      .filter(({ specificity }) => specificity >= 0)
+      .sort((left, right) => right.specificity - left.specificity)[0]?.implementation;
   }
 
   #label(name: string): symbol {
@@ -550,6 +751,7 @@ export class Fiber {
   error?: unknown;
 
   readonly #runtime?: PluginRuntime;
+  readonly #scopeName?: string;
   readonly #children = new Set<Fiber>();
   readonly #effects: Array<Disposable<Awaitable<void>> & { [effectMeta]?: EffectMeta }> = [];
   readonly #services = new Map<string, unknown>();
@@ -560,6 +762,11 @@ export class Fiber {
     return new Fiber(context, undefined, undefined, {}, undefined, true);
   }
 
+  static scope(parent: Context, name: string, meta: object): Fiber {
+    if (typeof name !== 'string' || !name.trim()) throw new TypeError('Scope name is required');
+    return new Fiber(parent.extend(meta), undefined, undefined, {}, undefined, false, name);
+  }
+
   constructor(
     parent: Context,
     plugin: Plugin | undefined,
@@ -567,24 +774,18 @@ export class Fiber {
     inject: Readonly<Record<string, unknown>>,
     runtime: PluginRuntime | undefined,
     root = false,
+    scopeName?: string,
   ) {
     this.parent = parent;
     this.plugin = plugin;
     this.config = config;
     this.inject = inject;
     this.#runtime = runtime;
+    this.#scopeName = scopeName;
     const kernel = parent._kernel();
     this.id = root ? 0 : ++kernel.nextFiberId;
-    this.state = root ? FiberState.ACTIVE : FiberState.PENDING;
-    this.ctx = root
-      ? parent
-      : new Context(
-          kernel,
-          parent,
-          this,
-          undefined,
-          undefined,
-        );
+    this.state = root || scopeName ? FiberState.ACTIVE : FiberState.PENDING;
+    this.ctx = root ? parent : new Context(kernel, parent, this, undefined, undefined);
     if (!root) {
       kernel.fibers.add(this);
       runtime?.fibers.add(this);
@@ -594,7 +795,12 @@ export class Fiber {
   }
 
   get name(): string {
-    return this.#runtime?.name || this.plugin?.name || (this.id === 0 ? 'root' : `plugin-${this.id}`);
+    return (
+      this.#scopeName ||
+      this.#runtime?.name ||
+      this.plugin?.name ||
+      (this.id === 0 ? 'root' : `plugin-${this.id}`)
+    );
   }
 
   requires(name: string): boolean {
@@ -663,14 +869,17 @@ export class Fiber {
       }
     };
     const setupTask = run();
-    const dispose = Object.assign(async () => {
-      if (disposed) return;
-      disposed = true;
-      await setupTask.catch(() => undefined);
-      for (const cleanup of disposers.reverse()) await cleanup();
-      const index = this.#effects.indexOf(dispose);
-      if (index >= 0) this.#effects.splice(index, 1);
-    }, { [effectMeta]: Object.freeze({ label, children: Object.freeze([]) }) });
+    const dispose = Object.assign(
+      async () => {
+        if (disposed) return;
+        disposed = true;
+        await setupTask.catch(() => undefined);
+        for (const cleanup of disposers.reverse()) await cleanup();
+        const index = this.#effects.indexOf(dispose);
+        if (index >= 0) this.#effects.splice(index, 1);
+      },
+      { [effectMeta]: Object.freeze({ label, children: Object.freeze([]) }) },
+    );
     this.#effects.push(dispose);
     setupTask.catch(async (error) => {
       await dispose();
@@ -784,11 +993,24 @@ export class Fiber {
 
 export abstract class Service<T = unknown> {
   readonly name: string;
+  readonly definition: ServiceDefinition;
   readonly #contexts = new WeakMap<Context, this>();
 
-  constructor(protected readonly ctx: Context, name: string) {
-    this.name = name;
-    ctx.provide(name, this);
+  constructor(
+    protected readonly ctx: Context,
+    definition: string | ServiceDefinition,
+  ) {
+    this.definition =
+      typeof definition === 'string'
+        ? freezeServiceDefinition({
+            name: definition,
+            role: 'core',
+            permissions: Object.freeze([]),
+            isolate: true,
+          })
+        : freezeServiceDefinition(definition);
+    this.name = this.definition.name;
+    ctx.provideService(this.definition, this);
   }
 
   _bind(context: Context): this {
@@ -803,6 +1025,10 @@ export abstract class Service<T = unknown> {
     });
     this.#contexts.set(context, bound);
     return bound;
+  }
+
+  _inspectRegistrations(): readonly ServiceRegistrationInspection[] {
+    return Object.freeze([]);
   }
 
   protected resolveConfig(base?: T, head?: T): T {
@@ -839,7 +1065,10 @@ function isConstructor(value: Function): boolean {
   return /^class\s/u.test(Function.prototype.toString.call(value));
 }
 
-async function validateConfig(schema: StandardSchema | undefined, value: unknown): Promise<unknown> {
+async function validateConfig(
+  schema: StandardSchema | undefined,
+  value: unknown,
+): Promise<unknown> {
   if (!schema) return value;
   const result = await schema['~standard'].validate(value);
   if ('issues' in result && result.issues) {
@@ -849,7 +1078,67 @@ async function validateConfig(schema: StandardSchema | undefined, value: unknown
 }
 
 function validateServiceName(name: string): void {
-  if (!/^[A-Za-z][A-Za-z0-9._:-]*$/u.test(name)) throw new TypeError(`Invalid Service name: ${name}`);
+  if (!/^[A-Za-z][A-Za-z0-9._:-]*$/u.test(name))
+    throw new TypeError(`Invalid Service name: ${name}`);
+}
+
+function validateServiceDefinition(definition: ServiceDefinition): void {
+  if (!definition || typeof definition !== 'object') {
+    throw new TypeError('Service definition is required');
+  }
+  validateServiceName(definition.name);
+  if (!['core', 'registry', 'seam'].includes(definition.role)) {
+    throw new TypeError(`Invalid Service role: ${String(definition.role)}`);
+  }
+  if (!Array.isArray(definition.permissions)) {
+    throw new TypeError(`Service permissions must be an array: ${definition.name}`);
+  }
+  for (const permission of definition.permissions) {
+    if (typeof permission !== 'string' || !permission.trim()) {
+      throw new TypeError(`Service permission is invalid: ${definition.name}`);
+    }
+  }
+  if (typeof definition.isolate !== 'boolean') {
+    throw new TypeError(`Service isolate flag is invalid: ${definition.name}`);
+  }
+}
+
+function freezeServiceDefinition(definition: ServiceDefinition): ServiceDefinition {
+  validateServiceDefinition(definition);
+  return Object.freeze({
+    name: definition.name,
+    role: definition.role,
+    permissions: Object.freeze([...definition.permissions]),
+    isolate: definition.isolate,
+  });
+}
+
+function inheritedOwnString(context: Context, property: PropertyKey): string | undefined {
+  for (let current: Context | undefined = context; current; current = current.parent) {
+    if (!Object.hasOwn(current, property)) continue;
+    const value = Reflect.get(current, property);
+    return typeof value === 'string' && value ? value : undefined;
+  }
+}
+
+function endpointInspection(fiber: Fiber, context: Context): ServiceEndpointInspection {
+  return Object.freeze({
+    fiberId: fiber.id,
+    fiberName: fiber.name,
+    fiberState: fiber.state,
+    realm: context.serviceRealm(),
+  });
+}
+
+function compareServiceEndpoint(
+  left: ServiceEndpointInspection,
+  right: ServiceEndpointInspection,
+): number {
+  return (
+    left.realm.id.localeCompare(right.realm.id) ||
+    left.fiberName.localeCompare(right.fiberName) ||
+    left.fiberId - right.fiberId
+  );
 }
 
 function isIterable(value: unknown): value is Iterable<unknown> {

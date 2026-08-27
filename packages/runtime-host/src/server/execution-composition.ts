@@ -309,6 +309,8 @@ export async function createExecutionRuntimeHostComposition(
       });
     }
     const oauthCredentials = new HostOAuthExecutionAuthority(runtimePolicyStores);
+    extensions.registerHostCapability('credentials', oauthCredentials, ['credentials']);
+    extensions.registerHostCapability('storage', stores, ['storage']);
     const openedScheduledTaskStore = await openInteractiveScheduledTaskStoreForWrite(
       context.owner.lease,
     );
@@ -351,6 +353,7 @@ export async function createExecutionRuntimeHostComposition(
       runtimePolicyActivation,
       applyRuntimePolicyMutationEffects,
     );
+    extensions.registerHostCapability('settings', runtimePolicy, ['settings']);
     const sessionAdmission = new SessionAdmissionGate();
     const memoryExtractionLane = new MemoryExtractionSessionLane();
     let runtimeResources: HostRuntimeResourceCoordinator | undefined;
@@ -369,6 +372,9 @@ export async function createExecutionRuntimeHostComposition(
       },
     });
     const sandboxManager = createBuiltinSandboxManager();
+    extensions.registerHostCapability('sandbox', Object.freeze({ manager: sandboxManager }), [
+      'sandbox',
+    ]);
     const filesystemWorkerLaunchSpecProvider =
       sandboxManager && isBuiltinFilesystemWorkerSandboxAvailable()
         ? createFilesystemWorkerLaunchSpecProvider({
@@ -406,6 +412,7 @@ export async function createExecutionRuntimeHostComposition(
       ...(managedFilesystemWorker ? { filesystemWorker: managedFilesystemWorker } : {}),
       ...(managedWorkspaceOwner ? { managedOwner: managedWorkspaceOwner } : {}),
     });
+    extensions.registerHostCapability('workspace', workspaceExecution, ['workspace']);
     const taskLedger = new HostTaskLedgerCoordinator(
       taskLedgerStore,
       sessionAdmission,
@@ -430,6 +437,8 @@ export async function createExecutionRuntimeHostComposition(
       artifacts: openedArtifactStore,
       requestDrain: context.requestDrain,
     });
+    extensions.registerHostCapability('attachments', executionArtifacts, ['attachments']);
+    extensions.registerHostCapability('artifacts', openedArtifactStore, ['artifacts']);
     const builtinTools = {
       shellRuns: runtimeResources,
       runtimeResources,
@@ -448,9 +457,17 @@ export async function createExecutionRuntimeHostComposition(
     const webFetchService = createHostWebFetchService({
       policy: runtimePolicyStores.operations,
     });
+    const webCapability = { search: webSearchService.search, fetch: webFetchService.fetch };
     const hostTools = [
-      createHostWebSearchToolFromService(webSearchService),
-      createHostWebFetchToolFromService(webFetchService),
+      createHostWebSearchToolFromService({
+        search: (input) => {
+          const sessionId = input.sessionId ?? PROFILE_EXTENSION_SCOPE;
+          return extensions.resolveWeb(sessionId, webCapability).search({ ...input, sessionId });
+        },
+      }),
+      createHostWebFetchToolFromService({
+        fetch: (input) => extensions.resolveWeb(input.sessionId, webCapability).fetch(input),
+      }),
       ...runtimePolicy.modelTools,
     ];
     const childAgentTools = createHostChildAgentToolComposition({
@@ -518,6 +535,7 @@ export async function createExecutionRuntimeHostComposition(
         };
       },
     );
+    extensions.registerHostCapability('skills', skills, ['skills']);
     const projects = new HostProjectCatalogCoordinator(
       openedProjectCatalog,
       projectCatalogChanges,
@@ -612,6 +630,7 @@ export async function createExecutionRuntimeHostComposition(
         claudeDeviceId: context.owner.capability.rootId,
         usage: openedUsageStores,
         requestDrain: context.requestDrain,
+        createModel: (scopeId, input) => extensions.createModel(scopeId, input),
       }),
       acquireResidency: () => context.acquireResidency('daily-review'),
       requestDrain: context.requestDrain,
@@ -660,6 +679,7 @@ export async function createExecutionRuntimeHostComposition(
       activation: runtimePolicyActivation,
       requestDrain: context.requestDrain,
     });
+    extensions.registerHostCapability('memory', memory, ['memory']);
     memoryExtraction = new HostMemoryExtractionCoordinator({
       store: longTermMemoryStore,
       policy: runtimePolicyStores.runtimePolicy,
@@ -680,6 +700,7 @@ export async function createExecutionRuntimeHostComposition(
         claudeDeviceId: context.owner.capability.rootId,
         usage: openedUsageStores,
         requestDrain: context.requestDrain,
+        createModel: (scopeId, input) => extensions.createModel(scopeId, input),
       }),
       lane: memoryExtractionLane,
       acquireResidency: () => context.acquireResidency('memory-extraction'),
@@ -705,6 +726,10 @@ export async function createExecutionRuntimeHostComposition(
               ),
               goalTools: requireGoal(goal).tools,
               builtinTools,
+              resolveFilesystem: (sessionId, base) => extensions.resolveFilesystem(sessionId, base),
+              resolveShell: (sessionId, base) => extensions.resolveShell(sessionId, base),
+              renderScopedSystemPrompt: (sessionId, phase, promptContext) =>
+                extensions.renderSystemPrompt(sessionId, phase, promptContext),
               hostTools,
               resolveRootTools: (sessionId) =>
                 requireGraphCoordinator(graphCoordinator).toolsForSession(sessionId),
@@ -852,6 +877,7 @@ export async function createExecutionRuntimeHostComposition(
         claudeDeviceId: context.owner.capability.rootId,
         usage: openedUsageStores,
         requestDrain: context.requestDrain,
+        createModel: (scopeId, input) => extensions.createModel(scopeId, input),
       }),
       readModel: new RuntimeReadModel({
         runStore: stores.agentRunStore,
@@ -867,6 +893,22 @@ export async function createExecutionRuntimeHostComposition(
       requestDrain: context.requestDrain,
     });
     sessionEffects = sessionEffectCoordinator;
+    extensions.registerHostCapability(
+      'sessionTitle',
+      Object.freeze({
+        generate: (input: Parameters<typeof sessionEffectCoordinator.generateTitle>[0]) =>
+          sessionEffectCoordinator.generateTitle(input),
+      }),
+      ['sessionAccess', 'model'],
+    );
+    extensions.registerHostCapability(
+      'agentDefaultModel',
+      Object.freeze({
+        resolve: async (sessionId: string) =>
+          (await stores.sessionStore.readHeaderSnapshot(sessionId)).model,
+      }),
+      ['sessionAccess', 'model'],
+    );
     const resolveChildTools = async (sessionId: string): Promise<readonly MakaTool[]> => {
       const header = await stores.sessionStore.readHeader(sessionId);
       const [resolved, snapshot] = await Promise.all([
@@ -897,6 +939,7 @@ export async function createExecutionRuntimeHostComposition(
           (connection) => connection.slug === slug,
         ) ?? null,
     });
+    extensions.registerHostCapability('subagents', subagentCatalog, ['sessionAccess', 'model']);
     manager = new SessionManager({
       store: stores.sessionStore,
       runStore: stores.agentRunStore,
@@ -977,6 +1020,7 @@ export async function createExecutionRuntimeHostComposition(
         }
       },
     });
+    extensions.registerHostCapability('sessions', manager, ['sessionAccess']);
     graphCoordinator = new AgentGraphCoordinator({
       sessionStore: stores.sessionStore,
       runStore: stores.agentRunStore,
@@ -1165,6 +1209,7 @@ export async function createExecutionRuntimeHostComposition(
         claudeDeviceId: context.owner.capability.rootId,
         usage: openedUsageStores,
         requestDrain: context.requestDrain,
+        createModel: (scopeId, input) => extensions.createModel(scopeId, input),
         readSessionHeader: (sessionId) => stores.sessionStore.readHeaderSnapshot(sessionId),
       }),
       admitTurn: (sessionId, text, checkpoint, controlLease) =>
@@ -1183,6 +1228,7 @@ export async function createExecutionRuntimeHostComposition(
       onProjectionChanged: (sessionId) => continuityCoordinator.enqueueCanonicalRefresh(sessionId),
       requestDrain: context.requestDrain,
     });
+    extensions.registerHostCapability('goals', goal, ['goals']);
     async function applyRuntimePolicyMutationEffects(): Promise<void> {
       try {
         await requireMemory(memory).refreshAfterPolicyMutation();
@@ -1223,7 +1269,7 @@ export async function createExecutionRuntimeHostComposition(
         );
       },
     });
-    extensionController.setAgentRuntime(
+    extensionController.registerAgentProvider(
       new HostExtensionAgentRegistry({
         hostEpoch: context.hostEpoch,
         sessions: sessionCatalog,
@@ -1251,6 +1297,7 @@ export async function createExecutionRuntimeHostComposition(
       acquireResidency: () => context.acquireResidency('scheduled-task'),
       requestDrain: context.requestDrain,
     });
+    extensions.registerHostCapability('jobs', scheduledTasks, ['jobs']);
     scheduledTaskTool = scheduledTasks.modelTool;
     const externalSessions = new HostExternalSessionCoordinator({
       adapters: createExternalSessionAdapterRegistry(),
@@ -1341,6 +1388,7 @@ export async function createExecutionRuntimeHostComposition(
             signal: new AbortController().signal,
           },
         );
+        await extensions.releaseAgentContext(sessionId);
       },
     });
     const hostedExecutionRunner = new HostHostedExecutionRunner({

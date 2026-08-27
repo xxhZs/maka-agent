@@ -5,6 +5,8 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { test } from 'node:test';
 import type { MakaTool } from '@maka/runtime/tool-runtime';
+import { Context } from '@maka/runtime/plugin-kernel';
+import { PluginSystemPromptService } from '@maka/runtime/plugin-system-prompt-service';
 import { HostExtensionController } from '../server/extension-controller.js';
 import {
   InstalledPluginPackageLoader,
@@ -374,6 +376,41 @@ test('Host Agent Runtime is injected independently from Extension contributions'
   }
 });
 
+test('trusted package activate() receives the scoped Context and owns Service cleanup', async () => {
+  const root = await mkdtemp(join(tmpdir(), 'maka-tool-context-'));
+  const source = join(root, 'source');
+  const store = new PluginPackageStore(join(root, 'control'));
+  try {
+    await createContextActivationPackage(source);
+    const sealed = await store.install(source);
+    const installed = await store.loadTool(sealed.extensionId);
+    const context = new Context();
+    new PluginSystemPromptService(context);
+    const activation = new InProcessPackageActivation(
+      installed,
+      Object.freeze({}),
+      undefined,
+      undefined,
+      undefined,
+      context,
+    );
+    await activation.healthCheck(installed.manifest.tools.map(({ handler }) => handler));
+    assert.deepEqual(
+      await context.systemPrompt.render('system', {
+        sessionId: 'session-1',
+        turnId: 'turn-1',
+        cwd: root,
+      }),
+      ['activated:session-1'],
+    );
+    await activation.dispose();
+    assert.deepEqual(context.systemPrompt.inspect(), []);
+    await context.fiber.dispose();
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
 async function createPackage(root: string, label: string, temperature: number): Promise<string> {
   const source = join(root, `source-${label}`);
   await mkdir(join(source, 'dist'), { recursive: true });
@@ -544,6 +581,45 @@ async function createAgentRuntimePackage(source: string): Promise<void> {
     };
   },
 };
+`,
+  );
+}
+
+async function createContextActivationPackage(source: string): Promise<void> {
+  await mkdir(join(source, 'dist'), { recursive: true });
+  await writeFile(
+    join(source, 'maka.extension.json'),
+    JSON.stringify({
+      schemaVersion: 1,
+      id: 'context-activation-test',
+      runtime: {
+        entry: 'dist/index.mjs',
+        tools: [
+          {
+            name: 'Noop',
+            description: 'Trigger module activation',
+            handler: 'Noop',
+            inputSchema: { type: 'object', additionalProperties: false },
+            recoveryMode: 'never_auto_retry',
+          },
+        ],
+        events: [],
+        listeners: [],
+        services: [],
+        timers: [],
+        permissions: { workspace: 'none', network: false },
+      },
+    }),
+  );
+  await writeFile(
+    join(source, 'dist', 'index.mjs'),
+    `export function activate(context) {
+  return context.systemPrompt.register({
+    id: 'fixture.activated',
+    render: ({ sessionId }) => 'activated:' + sessionId,
+  });
+}
+export default { Noop: () => ({ ok: true }) };
 `,
   );
 }

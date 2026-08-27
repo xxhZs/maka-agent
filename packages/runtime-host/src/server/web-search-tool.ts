@@ -22,6 +22,7 @@ export interface HostWebSearchService {
   search(input: {
     readonly query: string;
     readonly limit: number;
+    readonly sessionId?: string;
     readonly abortSignal?: AbortSignal;
     readonly policy?: ResolveWebSearchExecutionInput;
   }): Promise<WebSearchResponse>;
@@ -98,10 +99,11 @@ export function createHostWebSearchTool(input: HostWebSearchServiceInput): MakaT
 
 export function createHostWebSearchToolFromService(service: HostWebSearchService): MakaTool {
   return buildWebSearchTool({
-    search: ({ query, limit, abortSignal }) =>
+    search: ({ query, limit, sessionId, abortSignal }) =>
       service.search({
         query,
         limit,
+        sessionId,
         ...(abortSignal ? { abortSignal } : {}),
       }),
   });

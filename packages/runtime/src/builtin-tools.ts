@@ -48,6 +48,7 @@ import {
 } from './workspace-executor.js';
 import {
   createBoundaryFilesystemExecutor,
+  type FilesystemExecutor,
   type FilesystemExecuteInput,
 } from './filesystem-executor.js';
 
@@ -135,6 +136,8 @@ function internalFilesystemWriteFailure(tool: string, subject: string, extra?: s
 
 export interface BuildBuiltinToolsOptions {
   shellRuns?: ShellRunLauncher;
+  /** Context/Fiber-owned provider seam applied to the canonical Host shell launcher. */
+  shellRunsTransform?: (base: ShellRunLauncher) => ShellRunLauncher;
   runtimeResources?: RuntimeResourceReader;
   attachmentResources?: {
     readAttachmentResource(
@@ -152,6 +155,8 @@ export interface BuildBuiltinToolsOptions {
   sandboxManager?: SandboxManager;
   /** Sandboxed worker used for all local filesystem tools. */
   filesystemWorker?: Pick<FilesystemWorkerClient, 'execute'>;
+  /** Context/Fiber-owned provider seam applied after the canonical boundary executor is built. */
+  filesystemTransform?: (base: FilesystemExecutor) => FilesystemExecutor;
   /** Host-surface gate for Edit. Defaults to enabled. */
   includeEdit?: boolean;
   /** Test/embedding override. Production callers use the current process platform. */
@@ -167,11 +172,12 @@ export interface BuildBuiltinToolsOptions {
 
 export function buildBuiltinTools(options: BuildBuiltinToolsOptions = {}): MakaTool[] {
   const executor = options.executor ?? createLocalWorkspaceExecutor();
-  const filesystem = createBoundaryFilesystemExecutor({
+  const baseFilesystem = createBoundaryFilesystemExecutor({
     workspace: executor,
     ...(options.filesystemWorker ? { worker: options.filesystemWorker } : {}),
     ...(options.permissionProfile ? { permissionProfile: options.permissionProfile } : {}),
   });
+  const filesystem = options.filesystemTransform?.(baseFilesystem) ?? baseFilesystem;
   const executionFacts = executor.facts;
   const acceptsResourceRefs = Boolean(options.runtimeResources || options.attachmentResources);
   const readDescription = `Read a text file${options.snapshotImage ? ' or supported image' : ''} from disk${acceptsResourceRefs ? ', or read a whole runtime resource using ref' : ''}.`;
@@ -266,9 +272,12 @@ export function buildBuiltinTools(options: BuildBuiltinToolsOptions = {}): MakaT
     : fileReadParameters;
   const shell = options.shell ?? defaultShellPlan();
   const sandboxPlatform = options.sandboxPlatform ?? process.platform;
-  const bashTools = options.shellRuns
+  const shellRuns = options.shellRuns
+    ? (options.shellRunsTransform?.(options.shellRuns) ?? options.shellRuns)
+    : undefined;
+  const bashTools = shellRuns
     ? [
-        buildManagedBashTool(options.shellRuns, {
+        buildManagedBashTool(shellRuns, {
           executionFacts,
           shell,
           ...(options.sandboxManager

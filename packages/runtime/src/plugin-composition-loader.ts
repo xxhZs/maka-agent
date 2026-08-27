@@ -1,4 +1,10 @@
-import { Context, type Fiber, type Inject, type Plugin } from './plugin-kernel.js';
+import {
+  Context,
+  type Fiber,
+  type Inject,
+  type Plugin,
+  type ServiceRealmInspection,
+} from './plugin-kernel.js';
 import {
   fiberStateName,
   type MakaCompositionEntry,
@@ -41,11 +47,17 @@ export interface MakaCompositionLoaderOptions {
   readonly transaction?: (context: Context) => MakaPluginTransaction | undefined;
 }
 
+export interface MakaContextInspection {
+  readonly realm: ServiceRealmInspection;
+}
+
 export class MakaCompositionLoader {
   readonly root: Context;
   readonly #packages = new Map<string, MakaPluginPackage>();
   readonly #roots = new Map<MakaPluginRootId, LiveRoot>();
   readonly #entries = new Map<string, LiveEntry>();
+  readonly #agentContexts = new Map<string, Context>();
+  readonly #agentEntries = new Map<string, LiveEntry[]>();
   readonly #isolationLabels = new Map<string, symbol>();
   readonly #transaction?: (context: Context) => MakaPluginTransaction | undefined;
   #compositionGeneration = 0;
@@ -84,10 +96,14 @@ export class MakaCompositionLoader {
         );
       }
       const user = [...this.#entries.values()].find((entry) => entry.spec.packageId === packageId);
-      if (user) {
+      const agentUser = [...this.#agentEntries.values()]
+        .flat()
+        .flatMap((entry) => [...walkLive(entry)])
+        .find((entry) => entry.spec.packageId === packageId);
+      if (user || agentUser) {
         throw new MakaPluginRuntimeError(
           'package_in_use',
-          `Plugin package is used by entry ${user.spec.id}`,
+          `Plugin package is used by entry ${(user ?? agentUser)!.spec.id}`,
         );
       }
       this.#packages.delete(packageId);
@@ -231,6 +247,125 @@ export class MakaCompositionLoader {
     );
   }
 
+  /**
+   * Returns the live capability view for one composition root.
+   *
+   * Host adapters use this to resolve the same Context/Fiber-owned Services as
+   * plugins in that root. Creating an empty root is intentional: root Contexts
+   * are lightweight views over the shared kernel and do not activate code.
+   */
+  context(rootId: MakaPluginRootId): Context {
+    return this.#root(rootId).context;
+  }
+
+  agentContext(rootId: MakaPluginRootId, agentId: string): Context {
+    validatePluginRootId(rootId);
+    validateAgentContextId(agentId);
+    const key = `${rootId}\0${agentId}`;
+    let context = this.#agentContexts.get(key);
+    if (!context) {
+      context = this.#root(rootId).context.scope(`agent:${agentId}`, { makaAgentId: agentId });
+      this.#agentContexts.set(key, context);
+    }
+    return context;
+  }
+
+  mountAgent(
+    rootId: MakaPluginRootId,
+    agentId: string,
+    entry: MakaCompositionEntry,
+  ): Promise<MakaCompositionEntryInspection> {
+    return this.#mutate(async () => {
+      validatePluginRootId(rootId);
+      validateAgentContextId(agentId);
+      validateCompositionEntry(entry);
+      const key = `${rootId}\0${agentId}`;
+      const entries = this.#agentEntries.get(key) ?? [];
+      const existingIds = new Set(
+        entries.flatMap((candidate) => [...walk(candidate.spec)].map(({ id }) => id)),
+      );
+      for (const candidate of walk(entry)) {
+        if (existingIds.has(candidate.id) || this.#entries.has(candidate.id)) {
+          throw new MakaPluginRuntimeError(
+            'entry_exists',
+            `Composition entry already exists: ${candidate.id}`,
+          );
+        }
+      }
+      const staged = await this.#stage(
+        entry,
+        rootId,
+        undefined,
+        this.agentContext(rootId, agentId),
+        false,
+      );
+      try {
+        await this.#commitSubtree(staged);
+      } catch (error) {
+        await this.#dispose(staged);
+        throw error;
+      }
+      entries.push(staged);
+      this.#agentEntries.set(key, entries);
+      return this.#inspect(staged);
+    });
+  }
+
+  unmountAgent(rootId: MakaPluginRootId, agentId: string, entryId: string): Promise<boolean> {
+    return this.#mutate(async () => {
+      validatePluginRootId(rootId);
+      validateAgentContextId(agentId);
+      const key = `${rootId}\0${agentId}`;
+      const entries = this.#agentEntries.get(key);
+      const index = entries?.findIndex(({ spec }) => spec.id === entryId) ?? -1;
+      if (!entries || index < 0) return false;
+      const [entry] = entries.splice(index, 1);
+      if (entries.length === 0) this.#agentEntries.delete(key);
+      await this.#dispose(entry!);
+      return true;
+    });
+  }
+
+  inspectAgentTree(
+    rootId: MakaPluginRootId,
+    agentId: string,
+  ): readonly MakaCompositionEntryInspection[] {
+    validatePluginRootId(rootId);
+    validateAgentContextId(agentId);
+    return Object.freeze(
+      (this.#agentEntries.get(`${rootId}\0${agentId}`) ?? []).map((entry) => this.#inspect(entry)),
+    );
+  }
+
+  async releaseAgentContext(rootId: MakaPluginRootId, agentId: string): Promise<boolean> {
+    validatePluginRootId(rootId);
+    validateAgentContextId(agentId);
+    const key = `${rootId}\0${agentId}`;
+    const context = this.#agentContexts.get(key);
+    if (!context) return false;
+    const entries = this.#agentEntries.get(key) ?? [];
+    this.#agentEntries.delete(key);
+    this.#agentContexts.delete(key);
+    await Promise.allSettled([...entries].reverse().map((entry) => this.#dispose(entry)));
+    await context.fiber.dispose();
+    return true;
+  }
+
+  inspectContexts(): readonly MakaContextInspection[] {
+    const contexts = [
+      this.root,
+      ...[...this.#roots.values()].map(({ context }) => context),
+      ...this.#agentContexts.values(),
+    ];
+    const realms = new Map<string, ServiceRealmInspection>();
+    for (const context of contexts) realms.set(context.serviceRealm().id, context.serviceRealm());
+    return Object.freeze(
+      [...realms.values()]
+        .sort((left, right) => left.id.localeCompare(right.id))
+        .map((realm) => Object.freeze({ realm })),
+    );
+  }
+
   inspect(entryId: string): MakaCompositionEntryInspection {
     return this.#inspect(this.#requireEntry(entryId));
   }
@@ -259,6 +394,11 @@ export class MakaCompositionLoader {
       const tasks = [...this.#entries.values()].flatMap((entry) =>
         entry.fiber?.inertia ? [entry.fiber.inertia] : [],
       );
+      for (const entry of [...this.#agentEntries.values()]
+        .flat()
+        .flatMap((root) => [...walkLive(root)])) {
+        if (entry.fiber?.inertia) tasks.push(entry.fiber.inertia);
+      }
       if (!tasks.length) return;
       await Promise.allSettled(tasks);
     }
@@ -329,6 +469,10 @@ export class MakaCompositionLoader {
       throw error;
     }
     const previous = [...this.#roots.values()];
+    const previousAgentEntries = [...this.#agentEntries.values()].flat();
+    const previousAgentContexts = [...this.#agentContexts.values()];
+    this.#agentEntries.clear();
+    this.#agentContexts.clear();
     this.#roots.clear();
     this.#entries.clear();
     for (const [rootId, root] of stagedRoots) {
@@ -339,10 +483,20 @@ export class MakaCompositionLoader {
     await Promise.allSettled(
       previous.flatMap((root) => [...root.entries].reverse().map((entry) => this.#dispose(entry))),
     );
+    await Promise.allSettled(
+      [...previousAgentEntries].reverse().map((entry) => this.#dispose(entry)),
+    );
+    await Promise.allSettled(previousAgentContexts.map((context) => context.fiber.dispose()));
   }
 
   async close(): Promise<void> {
     await this.#mutate(async () => {
+      const agentContexts = [...this.#agentContexts.values()];
+      const agentEntries = [...this.#agentEntries.values()].flat();
+      this.#agentEntries.clear();
+      this.#agentContexts.clear();
+      await Promise.allSettled([...agentEntries].reverse().map((entry) => this.#dispose(entry)));
+      await Promise.allSettled(agentContexts.map((context) => context.fiber.dispose()));
       const roots = [...this.#roots.values()];
       this.#roots.clear();
       this.#entries.clear();
@@ -376,35 +530,65 @@ export class MakaCompositionLoader {
   }
 
   async #reloadPackage(packageId: string): Promise<void> {
-    const affected = [...this.#entries.values()].filter(
-      (entry) =>
-        entry.spec.packageId === packageId &&
-        !ancestors(entry).some((ancestor) => ancestor.spec.packageId === packageId),
-    );
+    const affected = [
+      ...[...this.#entries.values()]
+        .filter(
+          (entry) =>
+            entry.spec.packageId === packageId &&
+            !ancestors(entry).some((ancestor) => ancestor.spec.packageId === packageId),
+        )
+        .map((entry) => ({
+          entry,
+          parentContext: entry.parent?.context ?? this.#root(entry.rootId).context,
+          siblings: entry.parent?.children ?? this.#root(entry.rootId).entries,
+          indexed: true,
+        })),
+      ...[...this.#agentEntries.entries()].flatMap(([key, entries]) => {
+        const parentContext = this.#agentContexts.get(key);
+        if (!parentContext) return [];
+        return entries
+          .flatMap((entry) => [...walkLive(entry)])
+          .filter(
+            (entry) =>
+              entry.spec.packageId === packageId &&
+              !ancestors(entry).some((ancestor) => ancestor.spec.packageId === packageId),
+          )
+          .map((entry) => ({
+            entry,
+            parentContext: entry.parent?.context ?? parentContext,
+            siblings: entry.parent?.children ?? entries,
+            indexed: false,
+          }));
+      }),
+    ];
     if (!affected.length) return;
-    const candidates: { readonly current: LiveEntry; readonly replacement: LiveEntry }[] = [];
+    const candidates: Array<{
+      readonly current: LiveEntry;
+      readonly replacement: LiveEntry;
+      readonly siblings: LiveEntry[];
+      readonly indexed: boolean;
+    }> = [];
     try {
-      for (const current of affected) {
+      for (const { entry: current, parentContext, siblings, indexed } of affected) {
         const replacement = await this.#stage(
           serialize(current),
           current.rootId,
           current.parent,
-          current.parent?.context ?? this.#root(current.rootId).context,
+          parentContext,
           false,
         );
-        candidates.push({ current, replacement });
+        candidates.push({ current, replacement, siblings, indexed });
       }
       for (const { replacement } of candidates) await this.#commitSubtree(replacement);
     } catch (error) {
       await Promise.allSettled(candidates.map(({ replacement }) => this.#dispose(replacement)));
       throw error;
     }
-    for (const { current, replacement } of candidates) {
-      const siblings = current.parent?.children ?? this.#root(current.rootId).entries;
+    for (const { current, replacement, siblings, indexed } of candidates) {
       const index = siblings.indexOf(current);
-      this.#unindex(current);
+      if (indexed) this.#unindex(current);
       siblings[index] = replacement;
-      this.#index(replacement);
+      if (indexed) this.#index(replacement);
     }
     await Promise.allSettled(candidates.map(({ current }) => this.#dispose(current)));
   }
@@ -743,6 +927,11 @@ function* walk(entry: MakaCompositionEntry): Generator<MakaCompositionEntry> {
   for (const child of entry.children ?? []) yield* walk(child);
 }
 
+function* walkLive(entry: LiveEntry): Generator<LiveEntry> {
+  yield entry;
+  for (const child of entry.children) yield* walkLive(child);
+}
+
 function isWithin(entry: LiveEntry, root: LiveEntry): boolean {
   for (let current: LiveEntry | undefined = entry; current; current = current.parent)
     if (current === root) return true;
@@ -758,4 +947,15 @@ function isDisabled(entry: LiveEntry): boolean {
 
 function diagnostic(error: unknown): string {
   return error instanceof Error ? error.message : String(error);
+}
+
+function validateAgentContextId(agentId: string): void {
+  if (
+    typeof agentId !== 'string' ||
+    agentId.length === 0 ||
+    Buffer.byteLength(agentId, 'utf8') > 256 ||
+    agentId.includes('\0')
+  ) {
+    throw new MakaPluginRuntimeError('invalid_entry', 'Invalid Agent Context id');
+  }
 }

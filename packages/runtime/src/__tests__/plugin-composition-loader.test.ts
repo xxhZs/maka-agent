@@ -6,6 +6,48 @@ import { MakaCompositionLoader } from '../plugin-composition-loader.js';
 import { PluginToolService } from '../plugin-tool-service.js';
 import type { MakaCompositionEntry, MakaPluginPackage } from '../plugin-runtime.js';
 
+test('composition exposes one App/Profile/Desktop/Session/Agent Context tree', async () => {
+  const loader = new MakaCompositionLoader();
+  const profile = loader.context('profile');
+  const desktop = loader.context('desktop-ui');
+  const session = loader.context('session:one');
+  const agent = loader.agentContext('session:one', 'agent-one');
+
+  assert.equal(profile.serviceRealm().id, 'profile');
+  assert.equal(desktop.serviceRealm().id, 'desktop-ui');
+  assert.equal(session.serviceRealm().id, 'session:one');
+  assert.deepEqual(agent.serviceRealm(), {
+    id: 'session:one/agent:agent-one',
+    kind: 'agent',
+    parentId: 'session:one',
+  });
+  assert.deepEqual(
+    loader.inspectContexts().map(({ realm }) => [realm.id, realm.parentId]),
+    [
+      ['app', undefined],
+      ['desktop-ui', 'app'],
+      ['profile', 'app'],
+      ['session:one', 'app'],
+      ['session:one/agent:agent-one', 'session:one'],
+    ],
+  );
+  const firstFiberId = agent.fiber.id;
+  agent.provideService(
+    { name: 'agentFixture', role: 'seam', permissions: [], isolate: true },
+    { value: 'first' },
+  );
+  assert.equal(await loader.releaseAgentContext('session:one', 'agent-one'), true);
+  const recreated = loader.agentContext('session:one', 'agent-one');
+  assert.notEqual(recreated.fiber.id, firstFiberId);
+  assert.doesNotThrow(() =>
+    recreated.provideService(
+      { name: 'agentFixture', role: 'seam', permissions: [], isolate: true },
+      { value: 'second' },
+    ),
+  );
+  await loader.close();
+});
+
 test('composition tree supports nested groups and repeated package instances', async () => {
   const activations: string[] = [];
   const plugin = ((ctx: Context, config: { label: string }) => {
@@ -141,14 +183,59 @@ test('Tool registrations are staged and owned by the entry Fiber', async () => {
   await loader.create('profile', entry('tool-a', 'tool-owner', { suffix: 'a' }));
   await loader.create('profile', entry('tool-b', 'tool-owner', { suffix: 'b' }));
   assert.deepEqual(
-    root.tools.inspect('profile').map(({ toolName }) => toolName),
+    loader
+      .context('profile')
+      .tools.inspect()
+      .map(({ toolName }) => toolName),
     ['hello_a', 'hello_b'],
   );
   await loader.remove('tool-a');
   assert.deepEqual(
-    root.tools.inspect('profile').map(({ toolName }) => toolName),
+    loader
+      .context('profile')
+      .tools.inspect()
+      .map(({ toolName }) => toolName),
     ['hello_b'],
   );
+  await loader.close();
+});
+
+test('Tool resolution follows Profile, Session, and Agent Context specificity', async () => {
+  const root = new Context();
+  new PluginToolService(root);
+  const loader = new MakaCompositionLoader({ root });
+  const toolPackage = (label: string): MakaPluginPackage =>
+    pkg(
+      `tool-${label}`,
+      Object.assign(
+        (ctx: Context) => {
+          ctx.tools.register({
+            name: 'layered_tool',
+            description: label,
+            parameters: z.object({}),
+            impl: async () => label,
+          });
+        },
+        { inject: ['tools'] },
+      ),
+    );
+  await loader.install(toolPackage('profile'));
+  await loader.install(toolPackage('session'));
+  await loader.install(toolPackage('agent'));
+  await loader.create('profile', entry('profile-tool', 'tool-profile'));
+  await loader.create('session:one', entry('session-tool', 'tool-session'));
+  await loader.mountAgent('session:one', 'agent-one', entry('agent-tool', 'tool-agent'));
+  const agent = loader.agentContext('session:one', 'agent-one');
+
+  assert.equal(loader.context('profile').tools.compose([])[0]?.description, 'profile');
+  assert.equal(loader.context('session:one').tools.compose([])[0]?.description, 'session');
+  assert.equal(agent.tools.compose([])[0]?.description, 'agent');
+  assert.deepEqual(
+    loader.inspectAgentTree('session:one', 'agent-one').map(({ id }) => id),
+    ['agent-tool'],
+  );
+  assert.equal(await loader.unmountAgent('session:one', 'agent-one', 'agent-tool'), true);
+  assert.equal(agent.tools.compose([])[0]?.description, 'session');
   await loader.close();
 });
 

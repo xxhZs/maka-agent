@@ -162,11 +162,17 @@ export async function createHostAiSdkBackend(input: HostAiSdkBackendInput): Prom
   const modelFactory = (
     modelInput: Parameters<typeof getAIModel>[0],
   ): ReturnType<typeof getAIModel> =>
-    getAIModel({
-      ...modelInput,
-      fetch: modelFetch,
-      requestHeaders: target.requestHeaders,
-    });
+    input.extensions?.createModel
+      ? input.extensions.createModel(input.context.sessionId, {
+          ...modelInput,
+          fetch: modelFetch,
+          requestHeaders: target.requestHeaders,
+        })
+      : getAIModel({
+          ...modelInput,
+          fetch: modelFetch,
+          requestHeaders: target.requestHeaders,
+        });
   let telemetryDrainRequested = false;
   const persistTelemetry = async (operation: () => Promise<void>): Promise<void> => {
     try {

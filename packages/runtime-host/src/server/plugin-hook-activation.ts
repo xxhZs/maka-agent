@@ -11,6 +11,7 @@ import type {
   ExtensionTimerContribution,
   ExtensionTimerInvocationContext,
 } from '@maka/runtime/extension-timer-contributions';
+import type { Context } from '@maka/runtime/plugin-kernel';
 import type { InstalledToolPackage, ToolPackageManifest } from './plugin-runtime-manifest.js';
 import {
   InProcessPackageActivation,
@@ -33,6 +34,7 @@ export class PluginHookActivation {
     callService?: PackageServiceCaller,
     agents?: PackageAgentRuntime,
     runtime?: InProcessPackageActivation,
+    pluginContext?: Context,
   ) {
     this.#runtime =
       runtime ??
@@ -42,6 +44,7 @@ export class PluginHookActivation {
         emitEvent,
         callService,
         agents,
+        pluginContext,
       );
     this.#ownsRuntime = runtime === undefined;
   }

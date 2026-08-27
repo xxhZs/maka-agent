@@ -2,6 +2,7 @@ import assert from 'node:assert/strict';
 import { test } from 'node:test';
 import { z } from 'zod';
 import { HostExtensionRuntime } from '../server/extension-runtime.js';
+import type { PackageAgentRuntime } from '../server/in-process-package-runtime.js';
 
 test('one Cordis package owns Tool, UI, and Hook contributions together', async () => {
   const runtime = new HostExtensionRuntime();
@@ -132,6 +133,181 @@ test('failed package reload leaves the current Fiber visible', async () => {
   );
   assert.equal(runtime.inspect('atomic-entry').current?.generation, 1);
   assert.equal(runtime.inspectTools('profile')[0]?.generation, 1);
+  await runtime.close();
+});
+
+test('Extension Services use Context/Fiber authority for layered resolution and inspection', async () => {
+  const runtime = new HostExtensionRuntime();
+  await runtime.installTool({
+    extensionId: 'fixture.layered',
+    toolNames: [],
+    serviceContributionIds: ['fixture.layered.echo'],
+    load: async (activation) => ({
+      tools: [],
+      services: [
+        {
+          name: 'fixture.layered.echo',
+          version: '1',
+          description: 'realm echo',
+          methods: [
+            {
+              name: 'read',
+              description: 'read realm',
+              handler: 'read',
+              inputSchema: { type: 'object', additionalProperties: false },
+              outputSchema: { type: 'string' },
+              timeoutMs: 1_000,
+            },
+          ],
+          invoke: async () => activation.scopeId,
+        },
+      ],
+    }),
+  });
+  await runtime.applyComposition({
+    operations: [
+      {
+        type: 'insert',
+        rootId: 'profile',
+        entry: { id: 'layered-profile', packageId: 'fixture.layered' },
+      },
+      {
+        type: 'insert',
+        rootId: 'session:a',
+        entry: { id: 'layered-session-a', packageId: 'fixture.layered' },
+      },
+    ],
+  });
+
+  assert.equal(
+    await runtime.callService('a', 'fixture.layered.echo', 'read', {}, invocationContext()),
+    'session:a',
+  );
+  assert.equal(
+    await runtime.callService('b', 'fixture.layered.echo', 'read', {}, invocationContext()),
+    'profile',
+  );
+  assert.equal(runtime.inspectServices('a')[0]?.entryId, 'layered-session-a');
+  assert.equal(runtime.inspectServices('b')[0]?.entryId, 'layered-profile');
+  const capability = runtime
+    .inspectAll()
+    .capabilities.find(
+      ({ name, scopeId }) => name === 'service:fixture.layered.echo' && scopeId === 'a',
+    );
+  assert.equal(capability?.role, 'seam');
+  assert.equal(capability?.realm.id, 'session:a');
+  assert.equal(capability?.provider.realm.id, 'session:a');
+
+  await runtime.applyComposition({
+    operations: [{ type: 'remove', entryId: 'layered-session-a' }],
+  });
+  assert.equal(runtime.inspectServices('a')[0]?.entryId, 'layered-profile');
+  await runtime.close();
+});
+
+test('Agent create publishes an inspectable Agent Context under its Session Context', async () => {
+  const runtime = new HostExtensionRuntime();
+  runtime.registerAgentProvider({
+    invoke: async (method) => {
+      assert.equal(method, 'create');
+      return { id: 'agent-one', sessionId: 'child-session' };
+    },
+    observe: () => () => undefined,
+  });
+  const agents = runtime.context('parent-session').get<PackageAgentRuntime>('agents');
+  assert.ok(agents);
+  await agents.invoke(
+    'create',
+    {},
+    {
+      sessionId: 'parent-session',
+      turnId: 'turn-one',
+      cwd: process.cwd(),
+      toolCallId: 'tool-one',
+      abortSignal: new AbortController().signal,
+      callerExtensionId: 'fixture.agent-owner',
+    },
+  );
+
+  assert.deepEqual(runtime.agentContext('agent-one')?.serviceRealm(), {
+    id: 'session:child-session/agent:agent-one',
+    kind: 'agent',
+    parentId: 'session:child-session',
+  });
+  assert.ok(
+    runtime
+      .inspectAll()
+      .contexts.some(({ realm }) => realm.id === 'session:child-session/agent:agent-one'),
+  );
+  const capabilities = runtime.context('parent-session').inspectServices();
+  assert.deepEqual(
+    capabilities.find(({ name }) => name === 'agentLoop')?.registrations.map(({ id }) => id),
+    ['maka.session-turn'],
+  );
+  assert.deepEqual(
+    capabilities
+      .find(({ name }) => name === 'agents')
+      ?.registrations.map(({ id, realm }) => [id, realm.id]),
+    [['agent-one', 'session:child-session/agent:agent-one']],
+  );
+  await runtime.close();
+});
+
+test('Agent execution resolves scoped capabilities and releases their Fiber lifecycle', async () => {
+  const runtime = new HostExtensionRuntime();
+  const agent = runtime.executionContext('agent-session');
+  agent.systemPrompt.register({
+    id: 'fixture.agent.prompt',
+    render: () => 'AGENT_ONLY',
+  });
+
+  assert.deepEqual(
+    await runtime.renderSystemPrompt('agent-session', 'system', {
+      sessionId: 'agent-session',
+      turnId: 'turn-one',
+      cwd: process.cwd(),
+    }),
+    ['AGENT_ONLY'],
+  );
+  assert.equal(await runtime.releaseAgentContext('agent-session'), true);
+  assert.deepEqual(
+    await runtime.renderSystemPrompt('agent-session', 'system', {
+      sessionId: 'agent-session',
+      turnId: 'turn-two',
+      cwd: process.cwd(),
+    }),
+    [],
+  );
+  await runtime.close();
+});
+
+test('Agent extension mounts contribute Tools only to that Agent Context', async () => {
+  const runtime = new HostExtensionRuntime();
+  await runtime.installTrustedTool({
+    extensionId: 'fixture.agent-tools',
+    tools: [
+      {
+        name: 'agent_scoped_tool',
+        description: 'agent scoped',
+        parameters: z.object({}),
+        impl: async () => 'agent',
+      },
+    ],
+  });
+  await runtime.mountAgentExtension('agent-session', 'agent-session', {
+    id: 'agent-tool-entry',
+    packageId: 'fixture.agent-tools',
+  });
+  assert.deepEqual(
+    runtime.resolveTools('agent-session', []).map(({ name }) => name),
+    ['agent_scoped_tool'],
+  );
+  assert.deepEqual(runtime.resolveTools('other-session', []), []);
+  assert.equal(
+    await runtime.unmountAgentExtension('agent-session', 'agent-session', 'agent-tool-entry'),
+    true,
+  );
+  assert.deepEqual(runtime.resolveTools('agent-session', []), []);
   await runtime.close();
 });
 

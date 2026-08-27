@@ -42,9 +42,14 @@ export interface ExtensionServiceContributionInspection extends ExtensionService
   readonly generation: number;
 }
 
-interface RegisteredService extends ExtensionServiceContributionInspection {
-  readonly token: symbol;
-  readonly validators: ReadonlyMap<string, { input: z.ZodType; output: z.ZodType }>;
+export interface ProvidedExtensionService {
+  readonly identity: Readonly<{
+    readonly entryId: string;
+    readonly scopeId: string;
+    readonly extensionId: string;
+    readonly generation: number;
+  }>;
+  readonly contribution: ExtensionServiceContribution;
 }
 
 export class ExtensionServiceContributionError extends Error {
@@ -64,143 +69,95 @@ export class ExtensionServiceContributionError extends Error {
   }
 }
 
-/** Scope-aware, lifecycle-owned typed Service registry. */
-export class ExtensionServiceContributionRegistry {
-  readonly #scopes = new Map<string, RegisteredService[]>();
-
-  register(
-    context: MakaContributionContext,
-    contribution: ExtensionServiceContribution,
-  ): () => void {
-    validateExtensionServiceContribution(context.extensionId, contribution);
-    const current = this.#scopes.get(context.scopeId) ?? [];
-    const conflict = current.find(
-      (entry) => entry.name === contribution.name && entry.entryId !== context.entryId,
-    );
-    if (conflict) {
-      throw new ExtensionServiceContributionError(
-        'service_conflict',
-        `Service "${contribution.name}" is already provided by entry ${conflict.entryId}`,
-      );
-    }
-    const validators = new Map<string, { input: z.ZodType; output: z.ZodType }>();
-    try {
-      for (const method of contribution.methods) {
-        validators.set(method.name, {
-          input: z.fromJSONSchema(method.inputSchema),
-          output: z.fromJSONSchema(method.outputSchema),
-        });
-      }
-    } catch (error) {
-      throw new ExtensionServiceContributionError(
-        'invalid_service',
-        `Service JSON Schema is unsupported: ${contribution.name}`,
-        { cause: error },
-      );
-    }
-    const entry: RegisteredService = Object.freeze({
-      entryId: context.entryId,
-      scopeId: context.scopeId,
-      extensionId: context.extensionId,
-      generation: context.generation,
-      ...contribution,
-      methods: Object.freeze(contribution.methods.map((method) => Object.freeze({ ...method }))),
-      validators,
-      token: Symbol(contribution.name),
-    });
-    this.#scopes.set(context.scopeId, [...current, entry]);
-    return () => removeRegistered(this.#scopes, context.scopeId, entry.token);
-  }
-
-  inspect(
-    scopeIds: readonly string[],
-    committed: readonly { readonly entryId: string; readonly generation: number }[],
-  ): readonly ExtensionServiceContributionInspection[] {
-    const generations = new Map(committed.map(({ entryId, generation }) => [entryId, generation]));
-    const resolved = new Map<string, RegisteredService>();
-    for (const scopeId of scopeIds) {
-      for (const entry of this.#scopes.get(scopeId) ?? []) {
-        if (generations.get(entry.entryId) !== entry.generation) continue;
-        resolved.set(entry.name, entry);
-      }
-    }
-    return Object.freeze(
-      [...resolved.values()]
-        .map(({ token: _token, validators: _validators, ...entry }) => Object.freeze(entry))
-        .sort((left, right) => left.name.localeCompare(right.name)),
+/**
+ * Invokes one Service implementation already resolved by the caller's Context.
+ * Scope and lifecycle authority deliberately stay in Context/Fiber; this helper
+ * owns only the JSON boundary validation required by package code.
+ */
+export async function invokeExtensionServiceContribution(
+  contribution: ExtensionServiceContribution,
+  method: string,
+  input: unknown,
+  context: ExtensionServiceInvocationContext,
+): Promise<unknown> {
+  const definition = contribution.methods.find((candidate) => candidate.name === method);
+  if (!definition) {
+    throw new ExtensionServiceContributionError(
+      'method_not_found',
+      `Service method is not defined: ${contribution.name}.${method}`,
     );
   }
-
-  async call(
-    scopeIds: readonly string[],
-    committed: readonly { readonly entryId: string; readonly generation: number }[],
-    service: string,
-    method: string,
-    input: unknown,
-    context: ExtensionServiceInvocationContext,
-  ): Promise<unknown> {
-    const entry = this.#resolve(scopeIds, committed, service);
-    const definition = entry.methods.find((candidate) => candidate.name === method);
-    if (!definition) {
-      throw new ExtensionServiceContributionError(
-        'method_not_found',
-        `Service method is not defined: ${service}.${method}`,
-      );
-    }
-    const validators = entry.validators.get(method)!;
-    const parsedInput = validators.input.safeParse(input);
-    if (!parsedInput.success) {
-      throw new ExtensionServiceContributionError(
-        'invalid_input',
-        `Service input does not match ${service}.${method}: ${z.prettifyError(parsedInput.error)}`,
-      );
-    }
-    const result = await entry.invoke(method, structuredClone(parsedInput.data), context);
-    const parsedOutput = validators.output.safeParse(result);
-    if (!parsedOutput.success) {
-      throw new ExtensionServiceContributionError(
-        'invalid_output',
-        `Service output does not match ${service}.${method}: ${z.prettifyError(parsedOutput.error)}`,
-      );
-    }
-    return structuredClone(parsedOutput.data);
+  let inputValidator: z.ZodType;
+  let outputValidator: z.ZodType;
+  try {
+    inputValidator = z.fromJSONSchema(definition.inputSchema);
+    outputValidator = z.fromJSONSchema(definition.outputSchema);
+  } catch (error) {
+    throw new ExtensionServiceContributionError(
+      'invalid_service',
+      `Service JSON Schema is unsupported: ${contribution.name}`,
+      { cause: error },
+    );
   }
-
-  #resolve(
-    scopeIds: readonly string[],
-    committed: readonly { readonly entryId: string; readonly generation: number }[],
-    service: string,
-  ): RegisteredService {
-    const generations = new Map(committed.map(({ entryId, generation }) => [entryId, generation]));
-    let resolved: RegisteredService | undefined;
-    for (const scopeId of scopeIds) {
-      const candidate = (this.#scopes.get(scopeId) ?? []).find(
-        (entry) => entry.name === service && generations.get(entry.entryId) === entry.generation,
-      );
-      if (candidate) resolved = candidate;
-    }
-    if (!resolved) {
-      throw new ExtensionServiceContributionError(
-        'service_not_found',
-        `Active Extension Service is not defined: ${service}`,
-      );
-    }
-    return resolved;
+  const parsedInput = inputValidator.safeParse(input);
+  if (!parsedInput.success) {
+    throw new ExtensionServiceContributionError(
+      'invalid_input',
+      `Service input does not match ${contribution.name}.${method}: ${z.prettifyError(parsedInput.error)}`,
+    );
   }
+  const result = await contribution.invoke(method, structuredClone(parsedInput.data), context);
+  const parsedOutput = outputValidator.safeParse(result);
+  if (!parsedOutput.success) {
+    throw new ExtensionServiceContributionError(
+      'invalid_output',
+      `Service output does not match ${contribution.name}.${method}: ${z.prettifyError(parsedOutput.error)}`,
+    );
+  }
+  return structuredClone(parsedOutput.data);
 }
 
 export function contributeExtensionService(
   context: MakaContributionContext,
-  registry: ExtensionServiceContributionRegistry,
   contribution: ExtensionServiceContribution,
 ): void {
-  context.runtimeContext.provide(`service:${contribution.name}`, contribution);
-  const unregister = registry.register(context, contribution);
+  validateExtensionServiceContribution(context.extensionId, contribution);
+  validateSchemas(contribution);
+  const provided: ProvidedExtensionService = Object.freeze({
+    identity: Object.freeze({
+      entryId: context.entryId,
+      scopeId: context.scopeId,
+      extensionId: context.extensionId,
+      generation: context.generation,
+    }),
+    contribution: Object.freeze({
+      ...contribution,
+      methods: Object.freeze(contribution.methods.map((method) => Object.freeze({ ...method }))),
+    }),
+  });
+  context.runtimeContext.provideService(
+    {
+      name: `service:${contribution.name}`,
+      role: 'seam',
+      permissions: Object.freeze([]),
+      isolate: true,
+    },
+    provided,
+  );
+}
+
+function validateSchemas(contribution: ExtensionServiceContribution): void {
   try {
-    context.ownEffect(`service:${contribution.name}`, unregister);
+    for (const method of contribution.methods) {
+      z.fromJSONSchema(method.inputSchema);
+      z.fromJSONSchema(method.outputSchema);
+    }
   } catch (error) {
-    unregister();
-    throw error;
+    throw new ExtensionServiceContributionError(
+      'invalid_service',
+      `Service JSON Schema is unsupported: ${contribution.name}`,
+      { cause: error },
+    );
   }
 }
 
@@ -273,18 +230,6 @@ function canonicalName(value: unknown): value is string {
     value.length <= 192 &&
     /^[A-Za-z][A-Za-z0-9_-]*(?:\.[A-Za-z][A-Za-z0-9_-]*)+$/u.test(value)
   );
-}
-
-function removeRegistered<T extends { readonly token: symbol }>(
-  registry: Map<string, T[]>,
-  scopeId: string,
-  token: symbol,
-): void {
-  const current = registry.get(scopeId);
-  if (!current) return;
-  const next = current.filter((entry) => entry.token !== token);
-  if (next.length > 0) registry.set(scopeId, next);
-  else registry.delete(scopeId);
 }
 
 function invalid(message: string): never {

@@ -249,6 +249,7 @@ async function withE2eWindow(
     scrollMotion,
     invocableSkills,
     gitReviewExtraFiles,
+    automatedUiExtensionImport,
   }: {
     seed: boolean;
     readinessSelector: string;
@@ -262,8 +263,12 @@ async function withE2eWindow(
     showWindow?: boolean;
     invocableSkills?: boolean;
     gitReviewExtraFiles?: number;
+    automatedUiExtensionImport?: boolean;
   },
-  use: (page: Page, context: { userDataDir: string }) => Promise<void>,
+  use: (
+    page: Page,
+    context: { userDataDir: string; restart: () => Promise<Page> },
+  ) => Promise<void>,
 ): Promise<void> {
   const userDataDir = await mkdtemp(path.join(tmpdir(), 'maka-e2e-'));
   // Lives inside the throwaway userData dir so the existing teardown removes
@@ -282,52 +287,60 @@ async function withE2eWindow(
     // Legacy E2E specs assert Chinese labels and should not inherit the CI
     // host locale. E2e-fixture workspaces use the explicit renderer override.
     if (locale && !e2eFixtureScenario) await seedE2eLocale(userDataDir, locale);
-    app = await electron.launch({
-      args: ['.'],
-      cwd: DESKTOP_ROOT,
-      env: buildFixtureEnv(userDataDir, homeDir, {
-        scenario: e2eFixtureScenario,
-        locale,
-        platform,
-        scrollMotion,
-        // xvfb throttles a hidden window's compositor to ~1fps. Geometry
-        // fixtures opt in locally; every fixture is visible on isolated CI X.
-        showWindow: showWindow || isCiLinuxDisplay(),
-      }),
+    const fixtureEnv = buildFixtureEnv(userDataDir, homeDir, {
+      scenario: e2eFixtureScenario,
+      locale,
+      platform,
+      scrollMotion,
+      // xvfb throttles a hidden window's compositor to ~1fps. Geometry
+      // fixtures opt in locally; every fixture is visible on isolated CI X.
+      showWindow: showWindow || isCiLinuxDisplay(),
     });
-    app.on('console', (message) => {
-      mainLogs.push(message.text());
-      if (mainLogs.length > 20) mainLogs.shift();
-    });
-    let page: Page;
-    try {
-      page = await app.firstWindow();
-    } catch (error) {
-      const detail = error instanceof Error ? error.message : String(error);
-      const logs = mainLogs.length > 0 ? `\nElectron main console:\n${mainLogs.join('\n')}` : '';
-      throw new Error(`${detail}${logs}`, { cause: error });
+    if (automatedUiExtensionImport) {
+      fixtureEnv.MAKA_E2E_UI_EXTENSION_PATH = path.join(userDataDir, 'combined-extension');
     }
-    page.on('console', (message) => {
-      rendererLogs.push(`[console:${message.type()}] ${message.text()}`);
-      if (rendererLogs.length > 30) rendererLogs.shift();
-    });
-    page.on('pageerror', (error) => {
-      rendererLogs.push(`[pageerror] ${error.stack ?? error.message}`);
-      if (rendererLogs.length > 30) rendererLogs.shift();
-    });
-    // Centralize the cold-start wait so test bodies are flake-free under retries:0.
-    try {
-      await page.waitForSelector(readinessSelector, { timeout: 20_000 });
-      if (invocableSkills) {
-        await waitForInvocableSkills(page, ['project-only', 'workspace-only']);
+    const launch = async (): Promise<Page> => {
+      app = await electron.launch({ args: ['.'], cwd: DESKTOP_ROOT, env: fixtureEnv });
+      app.on('console', (message) => {
+        mainLogs.push(message.text());
+        if (mainLogs.length > 20) mainLogs.shift();
+      });
+      let page: Page;
+      try {
+        page = await app.firstWindow();
+      } catch (error) {
+        const detail = error instanceof Error ? error.message : String(error);
+        const logs = mainLogs.length > 0 ? `\nElectron main console:\n${mainLogs.join('\n')}` : '';
+        throw new Error(`${detail}${logs}`, { cause: error });
       }
-    } catch (error) {
-      const detail = error instanceof Error ? error.message : String(error);
-      const mainDetail = mainLogs.length > 0 ? `\nElectron main console:\n${mainLogs.join('\n')}` : '';
-      const rendererDetail = rendererLogs.length > 0 ? `\nRenderer console:\n${rendererLogs.join('\n')}` : '';
-      throw new Error(`${detail}${mainDetail}${rendererDetail}`, { cause: error });
-    }
-    await use(page, { userDataDir });
+      page.on('console', (message) => {
+        rendererLogs.push(`[console:${message.type()}] ${message.text()}`);
+        if (rendererLogs.length > 30) rendererLogs.shift();
+      });
+      page.on('pageerror', (error) => {
+        rendererLogs.push(`[pageerror] ${error.stack ?? error.message}`);
+        if (rendererLogs.length > 30) rendererLogs.shift();
+      });
+      try {
+        await page.waitForSelector(readinessSelector, { timeout: 20_000 });
+        if (invocableSkills) {
+          await waitForInvocableSkills(page, ['project-only', 'workspace-only']);
+        }
+      } catch (error) {
+        const detail = error instanceof Error ? error.message : String(error);
+        const mainDetail = mainLogs.length > 0 ? `\nElectron main console:\n${mainLogs.join('\n')}` : '';
+        const rendererDetail = rendererLogs.length > 0 ? `\nRenderer console:\n${rendererLogs.join('\n')}` : '';
+        throw new Error(`${detail}${mainDetail}${rendererDetail}`, { cause: error });
+      }
+      return page;
+    };
+    const restart = async (): Promise<Page> => {
+      if (app) await closeElectronApplication(app, 5_000);
+      app = undefined;
+      return launch();
+    };
+    const page = await launch();
+    await use(page, { userDataDir, restart });
   } finally {
     try {
       if (app) await closeElectronApplication(app, 5_000);
@@ -339,6 +352,7 @@ async function withE2eWindow(
 
 export const test = base.extend<{
   window: Page;
+  extensionWindow: { page: Page; userDataDir: string; restart: () => Promise<Page> };
   gitReviewWindow: { page: Page; projectRoot: string };
   invocableSkillsWindow: Page;
   linkColorWindow: Page;
@@ -349,6 +363,19 @@ export const test = base.extend<{
   // Seeded: a pre-staged connection clears onboarding so the composer is ready.
   window: async ({}, use) => {
     await withE2eWindow({ seed: true, readinessSelector: COMPOSER_INPUT, locale: 'zh' }, use);
+  },
+  extensionWindow: async ({}, use) => {
+    await withE2eWindow(
+      {
+        seed: true,
+        readinessSelector: COMPOSER_INPUT,
+        locale: 'zh',
+        automatedUiExtensionImport: true,
+      },
+      async (page, context) => {
+        await use({ page, userDataDir: context.userDataDir, restart: context.restart });
+      },
+    );
   },
   gitReviewWindow: async ({}, use) => {
     await withE2eWindow(

@@ -17,22 +17,31 @@ export class PluginToolService extends Service {
   readonly registry: ExtensionToolContributionRegistry;
 
   constructor(ctx: Context, options: ExtensionToolContributionRegistryOptions = {}) {
-    super(ctx, 'tools');
+    super(ctx, {
+      name: 'tools',
+      role: 'registry',
+      permissions: Object.freeze([]),
+      isolate: true,
+    });
     this.registry = new ExtensionToolContributionRegistry(options);
   }
 
   register(tool: MakaTool): void {
     const identity = pluginIdentity(this.ctx);
     registerPluginContribution(this.ctx, `tool:${tool.name}`, () =>
-      this.registry.register(identity, tool),
+      this.registry.register({ ...identity, runtimeContext: this.ctx }, tool),
     );
   }
 
-  compose(rootId: string, coreTools: readonly MakaTool[]): readonly MakaTool[] {
-    return this.registry.compose(rootId, coreTools);
+  compose(coreTools: readonly MakaTool[]): readonly MakaTool[] {
+    return this.registry.compose(this.ctx, coreTools);
   }
 
-  inspect(rootId: string): readonly ExtensionToolContributionInspection[] {
-    return this.registry.inspect(rootId);
+  inspect(): readonly ExtensionToolContributionInspection[] {
+    return this.registry.inspect(this.ctx);
+  }
+
+  _inspectRegistrations(): readonly import('./plugin-kernel.js').ServiceRegistrationInspection[] {
+    return this.registry.inspectRegistrations(this.ctx);
   }
 }

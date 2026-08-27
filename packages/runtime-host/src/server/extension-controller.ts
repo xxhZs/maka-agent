@@ -5,6 +5,7 @@ import type {
   MakaPluginRootId,
 } from '@maka/runtime/plugin-runtime';
 import type { MakaTool, MakaToolContext } from '@maka/runtime/tool-runtime';
+import type { Disposable } from '@maka/runtime/plugin-kernel';
 import { createHash } from 'node:crypto';
 import {
   type ExtensionCompositionEntryProjection,
@@ -90,7 +91,7 @@ export class HostExtensionController {
       this.#persistedComposition = composition;
     },
   );
-  readonly #uiPackageService = new UiPackageService();
+  readonly #uiPackageService: UiPackageService;
   #mutationTail: Promise<void> = Promise.resolve();
   #recovered = false;
   #draining = false;
@@ -106,6 +107,10 @@ export class HostExtensionController {
     private readonly uiState = new HostExtensionUiStateStore(),
     private readonly uiPackages?: PluginPackageStore,
   ) {
+    this.#uiPackageService = new UiPackageService(
+      (scopeId) => this.runtime.context(scopeId).get<PackageAgentRuntime>('agents'),
+      (scopeId) => this.runtime.context(scopeId),
+    );
     this.loader.setConfigurationResolver?.((entryId) => this.#configurationForEntry(entryId));
     this.loader.setEventEmitter?.((scopeId, event, payload, context) =>
       this.runtime.emitEvent(scopeId, event, payload, context),
@@ -122,9 +127,8 @@ export class HostExtensionController {
     return this.runtime.resolveTools(scopeId, []).find((tool) => tool.name === name);
   }
 
-  setAgentRuntime(runtime: PackageAgentRuntime): void {
-    this.loader.setAgentRuntime?.(runtime);
-    this.#uiPackageService.setAgentRuntime(runtime);
+  registerAgentProvider(runtime: PackageAgentRuntime): Disposable<Promise<void>> {
+    return this.runtime.registerAgentProvider(runtime);
   }
 
   emitEvent(scopeId: string, event: string, payload: unknown, context: MakaToolContext) {

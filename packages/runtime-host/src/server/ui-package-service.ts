@@ -1,4 +1,5 @@
 import type { MakaToolContext } from '@maka/runtime/tool-runtime';
+import type { Context } from '@maka/runtime/plugin-kernel';
 import { join } from 'node:path';
 import {
   InProcessPackageActivation,
@@ -11,18 +12,19 @@ import type { InstalledUiPackage } from './plugin-ui-manifest.js';
 
 /** Executes a trusted UI package's private Host methods in process. */
 export class UiPackageService {
-  #agents: PackageAgentRuntime | undefined;
-
-  setAgentRuntime(runtime: PackageAgentRuntime): void {
-    this.#agents = runtime;
-  }
+  constructor(
+    private readonly resolveAgents: (scopeId: string) => PackageAgentRuntime | undefined = () =>
+      undefined,
+    private readonly resolveContext: (scopeId: string) => Context | undefined = () => undefined,
+  ) {}
 
   async invokeAgent(
     installed: InstalledUiPackage,
     value: unknown,
     signal: AbortSignal,
   ): Promise<unknown> {
-    if (!this.#agents) throw new Error('Maka Agent Runtime is unavailable');
+    const agents = this.resolveAgents('desktop-ui');
+    if (!agents) throw new Error('Maka Agent Service is unavailable');
     if (!value || typeof value !== 'object' || Array.isArray(value)) {
       throw new TypeError('UI Agent request must be an object');
     }
@@ -37,7 +39,7 @@ export class UiPackageService {
       throw new TypeError('UI Agent method is invalid');
     }
     const method = request.method as PackageAgentRuntimeMethod;
-    const result = await this.#agents.invoke(method, request.input ?? {}, {
+    const result = await agents.invoke(method, request.input ?? {}, {
       sessionId: `ui:${installed.extensionId}`,
       turnId: `ui-agent:${method}`,
       cwd: installed.root,
@@ -57,7 +59,8 @@ export class UiPackageService {
       undefined,
       undefined,
       undefined,
-      this.#agents,
+      this.resolveAgents('desktop-ui'),
+      this.resolveContext('desktop-ui'),
     );
     try {
       await activation.healthCheck(runtimePackage.manifest.tools.map(({ handler }) => handler));
@@ -79,7 +82,8 @@ export class UiPackageService {
       undefined,
       undefined,
       undefined,
-      this.#agents,
+      this.resolveAgents('desktop-ui'),
+      this.resolveContext('desktop-ui'),
     );
     const context: MakaToolContext = {
       sessionId: `ui:${installed.extensionId}`,

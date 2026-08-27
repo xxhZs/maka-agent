@@ -10,7 +10,12 @@ import {
   llmCallUsageFields,
   recordLlmCallStrict,
 } from '@maka/runtime/telemetry';
-import { buildProviderOptions, getAIModel } from '@maka/runtime/model-factory';
+import {
+  buildProviderOptions,
+  getAIModel,
+  type ModelFactoryInput,
+} from '@maka/runtime/model-factory';
+import type { LanguageModelV4 } from '@ai-sdk/provider';
 import { buildSessionRecapMessages } from '@maka/runtime/session-recap';
 import {
   buildSessionTitlePrompt,
@@ -52,6 +57,7 @@ export interface HostGoalEvaluatorInput {
   readonly requestDrain: () => void;
   readonly readSessionHeader: (sessionId: string) => Promise<SessionHeader>;
   readonly createFetchTransport?: (proxy: ProxiedFetchProxy | null) => ProxiedFetchTransport;
+  readonly createModel?: (scopeId: string, input: ModelFactoryInput) => LanguageModelV4;
   readonly now?: () => number;
   readonly newId?: () => string;
 }
@@ -334,6 +340,7 @@ type AuxiliaryModelCallAuthorityInput = Pick<
   | 'usage'
   | 'requestDrain'
   | 'createFetchTransport'
+  | 'createModel'
   | 'now'
   | 'newId'
 >;
@@ -352,6 +359,7 @@ interface AuxiliaryModelCallAuthority {
   readonly requestDrain: () => void;
   readonly now: () => number;
   readonly newId: () => string;
+  readonly createModel: (scopeId: string, input: ModelFactoryInput) => LanguageModelV4;
 }
 
 type AuxiliaryModelRequest =
@@ -395,6 +403,7 @@ function createAuxiliaryModelCallAuthority(
     claudeDeviceId: input.claudeDeviceId,
     usage: input.usage,
     createFetchTransport: input.createFetchTransport ?? createProxiedFetchTransport,
+    createModel: input.createModel ?? ((_scopeId, modelInput) => getAIModel(modelInput)),
     telemetry: {
       insertLlmCall: async (record) => {
         try {
@@ -476,7 +485,7 @@ async function runHostAuxiliaryModelCall(
       | Awaited<ReturnType<typeof generateProviderPrefixModelCall>>;
     try {
       result = await readDuringBackendCreation(() => {
-        const model = getAIModel({
+        const model = authority.createModel(input.transportContextId, {
           connection: target.connection,
           apiKey,
           modelId: target.model,

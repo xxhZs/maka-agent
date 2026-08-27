@@ -1,4 +1,6 @@
 import type { MakaContributionContext } from './plugin-runtime.js';
+import type { Context } from './plugin-kernel.js';
+import type { ServiceRegistrationInspection } from './plugin-kernel.js';
 import type { MakaTool } from './tool-runtime.js';
 
 const RESERVED_TOOL_NAMES = new Set([
@@ -40,6 +42,7 @@ interface RegisteredExtensionTool extends ExtensionToolContributionInspection {
   retired: boolean;
   failures: number;
   circuitOpen: boolean;
+  readonly ownerContext?: Context;
 }
 
 export interface ExtensionToolContributionRegistryOptions {
@@ -62,7 +65,9 @@ export class ExtensionToolContributionRegistry {
   constructor(private readonly options: ExtensionToolContributionRegistryOptions = {}) {}
 
   register(
-    context: Pick<MakaContributionContext, 'entryId' | 'scopeId' | 'extensionId' | 'generation'>,
+    context: Pick<MakaContributionContext, 'entryId' | 'scopeId' | 'extensionId' | 'generation'> & {
+      readonly runtimeContext?: Context;
+    },
     tool: MakaTool,
   ): () => void {
     validateContext(context);
@@ -88,7 +93,17 @@ export class ExtensionToolContributionRegistry {
       scope = new Map();
       this.#byScope.set(context.scopeId, scope);
     }
-    const existing = scope.get(key);
+    const existing = context.runtimeContext
+      ? [...scope.values()].find(
+          (candidate) =>
+            candidate.key === key &&
+            candidate.ownerContext !== undefined &&
+            context.runtimeContext!.sameServiceRealm(candidate.ownerContext, 'tools'),
+        )
+      : scope.get(key);
+    const storageKey = context.runtimeContext
+      ? `${key}\0${context.runtimeContext.serviceRealm().id}`
+      : key;
     if (
       existing &&
       (existing.entryId !== context.entryId || existing.extensionId !== context.extensionId)
@@ -148,26 +163,27 @@ export class ExtensionToolContributionRegistry {
       retired: false,
       failures: 0,
       circuitOpen: false,
+      ...(context.runtimeContext ? { ownerContext: context.runtimeContext } : {}),
     };
-    scope.set(key, entry);
+    scope.set(storageKey, entry);
 
     // Idempotent and generation-safe: a stale disposer cannot delete a newer
     // registration that reused the same name after this entry was removed.
     return () => {
       const currentScope = this.#byScope.get(context.scopeId);
-      if (currentScope?.get(key)?.token !== token) {
+      if (currentScope?.get(storageKey)?.token !== token) {
         entry.retired = true;
         return;
       }
-      if (existing && !existing.retired) currentScope.set(key, existing);
-      else currentScope.delete(key);
+      if (existing && !existing.retired) currentScope.set(storageKey, existing);
+      else currentScope.delete(storageKey);
       entry.retired = true;
       if (currentScope.size === 0) this.#byScope.delete(context.scopeId);
     };
   }
 
-  compose(scopeId: string, coreTools: readonly MakaTool[]): readonly MakaTool[] {
-    validateIdentity('scopeId', scopeId);
+  compose(scope: string | Context, coreTools: readonly MakaTool[]): readonly MakaTool[] {
+    if (typeof scope === 'string') validateIdentity('scopeId', scope);
     const byName = new Map<string, MakaTool>();
     for (const tool of coreTools) {
       validateTool(tool, { allowProviderTool: true });
@@ -181,7 +197,7 @@ export class ExtensionToolContributionRegistry {
       }
       byName.set(key, tool);
     }
-    for (const entry of this.#scopeEntries(scopeId)) {
+    for (const entry of this.#scopeEntries(scope)) {
       const existing = byName.get(entry.key);
       if (existing) {
         throw new ExtensionToolContributionError(
@@ -196,10 +212,10 @@ export class ExtensionToolContributionRegistry {
     );
   }
 
-  inspect(scopeId: string): readonly ExtensionToolContributionInspection[] {
-    validateIdentity('scopeId', scopeId);
+  inspect(scope: string | Context): readonly ExtensionToolContributionInspection[] {
+    if (typeof scope === 'string') validateIdentity('scopeId', scope);
     return Object.freeze(
-      this.#scopeEntries(scopeId).map((entry) =>
+      this.#scopeEntries(scope).map((entry) =>
         Object.freeze({
           scopeId: entry.scopeId,
           entryId: entry.entryId,
@@ -211,10 +227,48 @@ export class ExtensionToolContributionRegistry {
     );
   }
 
-  #scopeEntries(scopeId: string): RegisteredExtensionTool[] {
-    return [...(this.#byScope.get(scopeId)?.values() ?? [])].sort((left, right) =>
-      compareString(left.toolName, right.toolName),
+  inspectRegistrations(scope: Context): readonly ServiceRegistrationInspection[] {
+    return Object.freeze(
+      this.#scopeEntries(scope).flatMap((entry) => {
+        const owner = entry.ownerContext;
+        if (!owner) return [];
+        return [
+          Object.freeze({
+            id: entry.toolName,
+            fiberId: owner.fiber.id,
+            fiberName: owner.fiber.name,
+            fiberState: owner.fiber.state,
+            realm: owner.serviceRealm(),
+          }),
+        ];
+      }),
     );
+  }
+
+  #scopeEntries(scope: string | Context): RegisteredExtensionTool[] {
+    if (typeof scope === 'string') {
+      return [...(this.#byScope.get(scope)?.values() ?? [])].sort((left, right) =>
+        compareString(left.toolName, right.toolName),
+      );
+    }
+    const selected = new Map<
+      string,
+      { readonly entry: RegisteredExtensionTool; readonly specificity: number }
+    >();
+    for (const byName of this.#byScope.values()) {
+      for (const entry of byName.values()) {
+        if (!entry.ownerContext) continue;
+        const specificity = scope.serviceSpecificity(entry.ownerContext, 'tools');
+        if (specificity < 0) continue;
+        const current = selected.get(entry.key);
+        if (!current || specificity > current.specificity) {
+          selected.set(entry.key, { entry, specificity });
+        }
+      }
+    }
+    return [...selected.values()]
+      .map(({ entry }) => entry)
+      .sort((left, right) => compareString(left.toolName, right.toolName));
   }
 }
 
