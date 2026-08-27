@@ -28,6 +28,7 @@ function contribution(
   id: string,
 ): ExtensionUiContributionProjection {
   return Object.freeze({
+    scopeId: 'desktop-ui',
     entryId,
     extensionId: `fixture.${entryId}`,
     generation,
