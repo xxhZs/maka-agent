@@ -117,3 +117,15 @@
   width: 100%;
   min-height: 64px;
 }
+
+.maka-ui-extension-slot--workspace .maka-ui-extension-frame-host--slot {
+  min-height: 18rem;
+}
+
+.maka-ui-extension-slot--panel .maka-ui-extension-frame-host--slot {
+  min-height: 8rem;
+}
+
+.maka-ui-extension-slot--statusbar .maka-ui-extension-frame-host--slot {
+  min-height: 2rem;
+}

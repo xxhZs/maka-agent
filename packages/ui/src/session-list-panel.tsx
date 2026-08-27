@@ -56,6 +56,10 @@ export function SessionListPanel(props: {
   rowActions?: SessionRowActions;
   /** Product-owned extension seat rendered above the permanent footer. */
   footerExtension?: ReactNode;
+  /** Product-owned extension seat above sidebar navigation. */
+  headerExtension?: ReactNode;
+  /** Product-owned extension seat above the session collection. */
+  mainExtension?: ReactNode;
 }) {
   const copy = getConversationCopy(useUiLocale()).sessions;
   const {
@@ -136,14 +140,17 @@ export function SessionListPanel(props: {
         // the rows' rhythm; its title is hidden because the rail landmark
         // already names the panel on screen, and stays for assistive tech.
         topContent={
-          <SessionSidebarNav
-            selection={props.selection}
-            scheduledTasks={props.scheduledTasks}
-            moduleMemory={props.moduleMemory}
-            onSelect={props.onSelect}
-            onNew={props.onNew}
-            onImport={props.onImport}
-          />
+          <>
+            {props.headerExtension}
+            <SessionSidebarNav
+              selection={props.selection}
+              scheduledTasks={props.scheduledTasks}
+              moduleMemory={props.moduleMemory}
+              onSelect={props.onSelect}
+              onNew={props.onNew}
+              onImport={props.onImport}
+            />
+          </>
         }
         footer={
           <>
@@ -156,6 +163,7 @@ export function SessionListPanel(props: {
           </>
         }
       >
+        {props.mainExtension}
         {!collapsed ? (
           <SessionHistoryList
             sessions={props.sessions}

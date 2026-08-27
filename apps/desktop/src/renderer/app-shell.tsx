@@ -2785,6 +2785,8 @@ function AppShellContent({
             onImport={() => setExternalImportOpen(true)}
             rowActions={sessionRowActions}
             projectActions={projectRowActions}
+            headerExtension={<UiExtensionSlot name="sidebar.header" />}
+            mainExtension={<UiExtensionSlot name="sidebar.main" />}
             footerExtension={<UiExtensionSlot name="sidebar.footer" />}
           />
         }
@@ -2801,6 +2803,7 @@ function AppShellContent({
           <MakaUriContext.Provider value={dispatchMakaUri}>
           <div className="maka-detail-with-artifacts">
             <div className="mainColumn" data-home-surface={homeSurfaceActive ? 'true' : undefined}>
+              <UiExtensionSlot name="workspace.main" className="maka-ui-extension-slot--workspace" />
               {navSelection.section === 'extensions' && navSelection.module === 'skills' ? (
                 <SkillsPage
                   hubHeader={extensionsHubHeader}
@@ -2892,6 +2895,9 @@ function AppShellContent({
                     ) : null}
                     {navSelection.section === 'sessions' ? <PlanExecutionPanel planMode={planMode} /> : null}
                     <ChatComposerRegion
+                  beforeExtension={<UiExtensionSlot name="composer.before" />}
+                  actionsExtension={<UiExtensionSlot name="composer.actions" />}
+                  afterExtension={<UiExtensionSlot name="composer.after" />}
                   workspacePicker={workspacePicker}
                   composerRef={composerRef}
                   active={navSelection.section === 'sessions'}
@@ -3065,7 +3071,9 @@ function AppShellContent({
               >
                 {navSelection.section === 'sessions' ? (
                   <ChatMessageSurface
+                beforeExtension={<UiExtensionSlot name="conversation.before" />}
                 headerExtension={<UiExtensionSlot name="conversation.header" />}
+                afterExtension={<UiExtensionSlot name="conversation.after" />}
                 sessionUiController={sessionUiController}
                 activeSessionId={activeId}
                 hasOlderHistory={activeTranscriptRange?.hasOlder === true}
@@ -3216,6 +3224,8 @@ function AppShellContent({
                   />
                 ) : null}
               </ChatSurfaceLayout>
+              <UiExtensionSlot name="workspace.panel" className="maka-ui-extension-slot--panel" />
+              <UiExtensionSlot name="statusbar" className="maka-ui-extension-slot--statusbar" />
             </div>
             {/* Rendered collapsed too: ChatWorkbar's own box is what the
                 collapse animates, and it has to be in the tree on both sides of
