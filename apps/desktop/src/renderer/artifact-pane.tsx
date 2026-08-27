@@ -58,7 +58,6 @@ import {
 } from '@maka/ui';
 import { EmptyState as AstryxEmptyState } from '@astryxdesign/core';
 import { ArtifactPreview } from './artifact-preview';
-import { UiExtensionSlot } from './ui-extension-host';
 import { nextArtifactListAction } from './artifact-list-keyboard';
 import { filterUserVisibleArtifacts } from './artifact-visibility';
 import { openPathFailureCopy } from './open-path';
@@ -531,7 +530,6 @@ export function ArtifactPane(props: {
             aria-label={copy.pane.previewNamed(previewRecord.name)}
             tabIndex={-1}
           >
-            <UiExtensionSlot name="artifact.preview" />
             <ArtifactPreview
               key={previewRecord.id}
               record={previewRecord}

@@ -14,19 +14,8 @@ export const EXTENSION_COMPOSITION_MAX_ENTRIES = 256;
 export const EXTENSION_COMPOSITION_RESULT_MAX_BYTES = 96 * 1024;
 export const EXTENSION_ERROR_MAX_BYTES = 4 * 1024;
 export const EXTENSION_UI_OFFICIAL_SLOTS = Object.freeze([
-  'sidebar.header',
-  'sidebar.main',
   'sidebar.footer',
-  'conversation.before',
   'conversation.header',
-  'conversation.after',
-  'composer.before',
-  'composer.actions',
-  'composer.after',
-  'workspace.main',
-  'workspace.panel',
-  'statusbar',
-  'artifact.preview',
   'settings.content',
 ] as const);
 

@@ -1,4 +1,4 @@
-import type { ComponentProps, ReactNode, Ref } from 'react';
+import type { ComponentProps, Ref } from 'react';
 import { Button, Composer, SandboxBoundaryPrompt, UserQuestionPrompt, Banner } from '@maka/ui';
 import type { ComposerHandle, ComposerInteraction } from '@maka/ui';
 import {
@@ -58,9 +58,6 @@ interface ChatComposerRegionProps extends Omit<ComponentProps<typeof Composer>, 
   respondToUserQuestion: ComponentProps<typeof UserQuestionPrompt>['onRespond'];
   stop: ComponentProps<typeof UserQuestionPrompt>['onStop'];
   boundaryUnreadableNotice?: BoundaryUnreadableNotice;
-  beforeExtension?: ReactNode;
-  actionsExtension?: ReactNode;
-  afterExtension?: ReactNode;
 }
 
 export function ChatComposerRegion({
@@ -76,14 +73,10 @@ export function ChatComposerRegion({
   respondToUserQuestion,
   stop,
   boundaryUnreadableNotice,
-  beforeExtension,
-  actionsExtension,
-  afterExtension,
   ...composerRest
 }: ChatComposerRegionProps) {
   return (
     <>
-      {beforeExtension}
       <div className="maka-composer-interaction-slot">
         {/* The notice stands in for the composer, so it appears exactly where
             the composer would have been — and never over a turn-scoped
@@ -131,8 +124,6 @@ export function ChatComposerRegion({
         draftPersistence={newTaskDraftPersistence}
         stopPending={activeId ? stopPendingBySession[activeId] === true : false}
       />
-      {actionsExtension}
-      {afterExtension}
     </>
   );
 }

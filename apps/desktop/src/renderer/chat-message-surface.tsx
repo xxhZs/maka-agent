@@ -76,8 +76,6 @@ interface ChatMessageSurfaceProps extends Omit<
   onReturnToLatestHistory: () => Promise<void> | void;
   /** Independently lifecycle-managed UI contributions above the transcript. */
   headerExtension?: ReactNode;
-  beforeExtension?: ReactNode;
-  afterExtension?: ReactNode;
 }
 
 function captureLiveContent(
@@ -117,8 +115,6 @@ export function ChatMessageSurface({
   onLoadEarlierHistory,
   onReturnToLatestHistory,
   headerExtension,
-  beforeExtension,
-  afterExtension,
   ...chatViewRest
 }: ChatMessageSurfaceProps) {
   const locale = useUiLocale();
@@ -221,7 +217,6 @@ export function ChatMessageSurface({
 
   return (
     <>
-      {beforeExtension}
       {headerExtension}
       <ChatView
         {...chatViewRest}
@@ -241,7 +236,6 @@ export function ChatMessageSurface({
           onClick: onReturnToLatestHistory,
         } : undefined}
       />
-      {afterExtension}
       {taskReadinessNotice && (
         <div className="maka-workspace-readiness-notice">
           <Banner
