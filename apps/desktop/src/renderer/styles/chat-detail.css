@@ -26,6 +26,16 @@
   min-height: 0;
 }
 
+/* Client plugins may explicitly take over the main conversation plate. The
+   shell keeps navigation and titlebar chrome, while the plugin receives the
+   complete content area instead of competing with chat in a side Workbar. */
+.maka-client-main-view {
+  flex: 1 1 auto;
+  min-width: 0;
+  min-height: 0;
+  overflow: hidden;
+}
+
 .maka-workbar-layout-vars,
 .maka-workbar-workspace-contents {
   display: contents;

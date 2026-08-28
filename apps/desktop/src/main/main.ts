@@ -6,11 +6,11 @@ installMainProcessLogCapture();
 
 protocol.registerSchemesAsPrivileged([
   {
-    scheme: 'maka-ui',
+    scheme: 'maka-client-plugin',
     privileges: {
       standard: true,
       secure: true,
-      supportFetchAPI: false,
+      supportFetchAPI: true,
       corsEnabled: false,
       bypassCSP: false,
     },

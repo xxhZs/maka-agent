@@ -17,6 +17,7 @@ import { ICON_SIZE, Clock, FolderOpen } from './icons.js';
 import { useUiLocale } from './locale-context.js';
 import { getConversationCopy } from './conversation-copy.js';
 import type { ReactNode, Ref } from 'react';
+import { SlotOutlet } from './ui-slots.js';
 
 export type SessionViewMode = 'conversation' | 'project';
 
@@ -54,8 +55,6 @@ export function SessionListPanel(props: {
   onNew(): void;
   onImport?(): void;
   rowActions?: SessionRowActions;
-  /** Product-owned extension seat rendered above the permanent footer. */
-  footerExtension?: ReactNode;
 }) {
   const copy = getConversationCopy(useUiLocale()).sessions;
   const {
@@ -136,27 +135,47 @@ export function SessionListPanel(props: {
         // the rows' rhythm; its title is hidden because the rail landmark
         // already names the panel on screen, and stays for assistive tech.
         topContent={
-          <SessionSidebarNav
-            selection={props.selection}
-            scheduledTasks={props.scheduledTasks}
-            moduleMemory={props.moduleMemory}
-            onSelect={props.onSelect}
-            onNew={props.onNew}
-            onImport={props.onImport}
-          />
+          <>
+            <SlotOutlet name="sidebar.brand.mark" owner={{ size: 24 }} />
+            <SlotOutlet name="sidebar.brand.name" owner={{}} />
+            <SessionSidebarNav
+              selection={props.selection}
+              scheduledTasks={props.scheduledTasks}
+              moduleMemory={props.moduleMemory}
+              onSelect={props.onSelect}
+              onNew={props.onNew}
+              onImport={props.onImport}
+            />
+          </>
         }
         footer={
           <>
-            {props.footerExtension}
-            <SessionSidebarFooter
-              updateReminder={props.updateReminder}
-              onOpenSettings={props.onOpenSettings}
-              onOpenUpdate={props.onOpenUpdate}
+            <SlotOutlet name="sidebar.footer.action" owner={{ wide: !collapsed }} />
+            <SlotOutlet
+              name="sidebar.settings"
+              owner={{ wide: !collapsed }}
+              options={{ fallback: (
+                <SlotOutlet
+                  name="settings.trigger"
+                  owner={{ wide: !collapsed }}
+                  options={{ fallback: (
+                    <SessionSidebarFooter
+                      updateReminder={props.updateReminder}
+                      onOpenSettings={props.onOpenSettings}
+                      onOpenUpdate={props.onOpenUpdate}
+                    />
+                  ) }}
+                />
+              ) }}
             />
           </>
         }
       >
-        {!collapsed ? (
+        <SlotOutlet name="sidebar.workspaces.directoryFlow" owner={{}} />
+        <SlotOutlet
+          name="sidebar.workspaces"
+          owner={{ wide: !collapsed }}
+          options={{ fallback: !collapsed ? (
           <SessionHistoryList
             sessions={props.sessions}
             activeId={props.activeId}
@@ -176,7 +195,8 @@ export function SessionListPanel(props: {
             heading={onViewModeChange ? copy.title : undefined}
             headingEnd={groupingSwitch}
           />
-        ) : null}
+          ) : null }}
+        />
       </SideNav>
     </div>
   );

@@ -2,7 +2,7 @@ import { lazy, Suspense, type ComponentProps, type CSSProperties } from 'react';
 import { Card } from '@astryxdesign/core/Card';
 import { ResizeHandle, type ResizableProps } from '@astryxdesign/core/Resizable';
 import { Spinner } from '@astryxdesign/core/Spinner';
-import { useUiLocale, type Composer } from '@maka/ui';
+import { useUiLocale, type ClientWorkbarView, type Composer } from '@maka/ui';
 import type { ChatModelChoice } from '@maka/core/chat-model-choice';
 import type { SessionSummary } from '@maka/core/session';
 import { getShellCopy } from './locales/shell-copy';
@@ -76,7 +76,12 @@ interface ChatWorkbarProps {
   onOpenLauncher: (placement: SessionWorkbarPlacement) => void;
   onRequestOpenTab: (
     placement: SessionWorkbarPlacement,
-    kind: SessionWorkbarTabKind,
+    kind: Exclude<SessionWorkbarTabKind, 'extension'>,
+  ) => void;
+  extensionViews?: readonly ClientWorkbarView[];
+  onRequestOpenExtension?: (
+    placement: SessionWorkbarPlacement,
+    view: ClientWorkbarView,
   ) => void;
   onDismissPanel: (placement: SessionWorkbarPlacement) => void;
   rightResizable: ResizableProps;
@@ -148,6 +153,8 @@ export function ChatWorkbar(props: ChatWorkbarProps) {
             onPinTab={props.onPinTab}
             onOpenLauncher={props.onOpenLauncher}
             onRequestOpenTab={props.onRequestOpenTab}
+            extensionViews={props.extensionViews}
+            onRequestOpenExtension={props.onRequestOpenExtension}
             quotes={props.quotes}
             onQuotesConsumed={props.onQuotesConsumed}
             onRemoveQuote={props.onRemoveQuote}

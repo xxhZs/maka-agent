@@ -3,7 +3,7 @@ import type { SettingsSection, ThemePreference } from '@maka/core/settings';
 import type { UiLocale } from '@maka/core/ui-locale';
 import type { NavSelection } from '@maka/ui';
 import { applyTheme } from './theme';
-import type { SessionWorkbarTabKind } from './session-workbar-tabs';
+import type { BuiltinSessionWorkbarTabKind } from './session-workbar-tabs';
 
 export interface AppShellE2eFixtureActions {
   applyE2eFixture(): Promise<void>;
@@ -18,7 +18,7 @@ export function createAppShellE2eFixtureActions(options: {
   setSessionListCollapsed: Dispatch<SetStateAction<boolean>>;
   setWorkbarCollapsed: Dispatch<SetStateAction<boolean>>;
   openWorkbarTab: (
-    kind: Exclude<SessionWorkbarTabKind, 'side-chat'>,
+    kind: BuiltinSessionWorkbarTabKind,
     placement?: 'right' | 'bottom',
     options?: { preview?: boolean },
   ) => void;

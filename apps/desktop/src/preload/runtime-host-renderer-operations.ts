@@ -8,17 +8,15 @@ export const RENDERER_RUNTIME_HOST_QUERY_OPERATIONS = [
   'daily-review.query',
   'execution.inspect.query',
   'extension.ui.snapshot',
-  'extension.ui.state.query',
   'extension.configuration.query',
   'scheduled-task.query',
 ] as const satisfies readonly (keyof OperationSpecMap)[];
 
 export const RENDERER_RUNTIME_HOST_COMMAND_OPERATIONS = [
+  'extension.client.tool.invoke',
   'daily-review.mutate',
   'scheduled-task.mutate',
   'web-search.execute',
-  'extension.ui.state.mutate',
-  'extension.ui.rpc.invoke',
 ] as const satisfies readonly (keyof OperationSpecMap)[];
 
 /** Runtime Host operations that the sandboxed renderer may invoke directly. */

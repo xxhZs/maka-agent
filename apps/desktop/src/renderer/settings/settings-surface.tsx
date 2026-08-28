@@ -27,7 +27,7 @@ import type {
 import type { LlmConnection, ProviderType } from '@maka/core/llm-connections';
 import type { UiLocalePreference } from '@maka/core/ui-locale';
 import { createDefaultSettings } from '@maka/core/settings';
-import { useMountedRef, useToast, useUiLocale } from '@maka/ui';
+import { SlotOutlet, useMountedRef, useToast, useUiLocale } from '@maka/ui';
 import { ProvidersPanel } from './providers-panel';
 import { SubagentSettingsPage } from './subagent-settings-page';
 import { safeLocalStorageSet } from '../browser-storage';
@@ -51,7 +51,6 @@ import { UsageSettingsPage } from './usage-settings-page';
 import { WebSearchSettingsPage } from './web-search-settings-page';
 import type { UiLocaleUpdateGate } from './ui-locale-update-gate';
 import { getSettingsSharedCopy } from '../locales/settings-shared-copy.js';
-import { UiExtensionSlot } from '../ui-extension-host.js';
 
 const NARROW_SETTINGS_QUERY = '(max-width: 760px)';
 
@@ -271,8 +270,11 @@ export function SettingsSurface(props: {
               data-settings-nav-column
               aria-label={copy.navigationLabel}
               topContent={(
-                isNarrowSettings
-                  ? <IconButton
+                <SlotOutlet
+                  name="settings.close"
+                  owner={{}}
+                  options={{ fallback: isNarrowSettings
+                    ? <IconButton
                       variant="ghost"
                       label={copy.backToApp}
                       tooltip={copy.backToApp}
@@ -286,7 +288,8 @@ export function SettingsSurface(props: {
                       label={copy.backToApp}
                       icon={<ArrowLeft size={ICON_SIZE.chrome} aria-hidden="true" />}
                       onClick={props.onClose}
-                    />
+                    /> }}
+                />
               )}
             >
               {localizedNav.map(({ group, label, items }) => (
@@ -334,19 +337,30 @@ export function SettingsSurface(props: {
               header={(
                 <LayoutHeader padding={6}>
                   <div className="settingsPageHeader">
-                    <div className="settingsPageHeaderTitleStack">
-                      <h2>{headerCopy.label}</h2>
-                      {headerCopy.description && (
-                        <p className="settingsPageHeaderDescription">{headerCopy.description}</p>
-                      )}
-                    </div>
+                    <SlotOutlet
+                      name="settings.header"
+                      owner={{}}
+                      options={{ fallback: (
+                        <div className="settingsPageHeaderTitleStack">
+                          <h2>{headerCopy.label}</h2>
+                          {headerCopy.description && (
+                            <p className="settingsPageHeaderDescription">{headerCopy.description}</p>
+                          )}
+                        </div>
+                      ) }}
+                    />
+                    <SlotOutlet name="settings.action" owner={{}} />
                   </div>
                 </LayoutHeader>
               )}
               content={(
                 <LayoutContent padding={6}>
-                  <UiExtensionSlot name="settings.content" />
-                  {loading ? (
+                  <SlotOutlet name="settings.plugins.tab" owner={{}} />
+                  <SlotOutlet name="settings.plugin.item" owner={{}} options={{ entryKey: section }} />
+                  <SlotOutlet
+                    name="settings.section"
+                    owner={{ close: props.onClose }}
+                    options={{ only: section, fallback: loading ? (
                     <SettingsSkeleton />
                   ) : (
                     <SettingsPageBody
@@ -371,6 +385,10 @@ export function SettingsSurface(props: {
                       initialCreateProviderType={createProviderRequest}
                       onInitialCreateProviderConsumed={() => setCreateProviderRequest(undefined)}
                     />
+                  ) }}
+                  />
+                  {section === 'general' && (
+                    <SlotOutlet name="settings.general.item" owner={{}} />
                   )}
                 </LayoutContent>
               )}

@@ -1108,7 +1108,6 @@ test('production Host executes a canonical ai-sdk Session against a real provide
       'manage_package',
       'memory_extract',
       'memory_remember',
-      'publish_ui_state',
       'request_sandbox_boundary',
       'task_create',
       'task_get',

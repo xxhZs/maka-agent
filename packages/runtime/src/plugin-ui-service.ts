@@ -21,8 +21,8 @@ export class PluginUiService extends Service {
     super(ctx, {
       name: 'ui',
       role: 'registry',
-      permissions: Object.freeze(['hostState']),
-      isolate: true,
+      permissions: Object.freeze([]),
+      isolate: false,
     });
   }
 

@@ -28,7 +28,6 @@ const RECOVERY_MODES = [
   'outcome_unknown',
   'never_auto_retry',
 ] as const;
-const SURFACES = ['app.root', 'app.overlay', 'app.slot'] as const;
 const jsonSchema = z.record(z.string(), z.unknown());
 const extensionName = z
   .string()
@@ -44,23 +43,6 @@ const callServiceInput = z.object({
   method: z.string().regex(/^[A-Za-z][A-Za-z0-9._-]{0,127}$/u),
   input: z.unknown(),
 });
-const uiStateValueSchema: z.ZodType<
-  null | boolean | number | string | readonly unknown[] | Readonly<Record<string, unknown>>
-> = z.lazy(() =>
-  z.union([
-    z.null(),
-    z.boolean(),
-    z.number().finite(),
-    z.string(),
-    z.array(uiStateValueSchema),
-    z.record(z.string(), uiStateValueSchema),
-  ]),
-);
-const publishUiStateInput = z.object({
-  extensionId: z.string().min(1).max(128),
-  key: z.string().min(1).max(128),
-  value: uiStateValueSchema,
-});
 const PACKAGE_TOOL_NAMES = new Set([
   'inspect_package',
   'define_package',
@@ -68,7 +50,6 @@ const PACKAGE_TOOL_NAMES = new Set([
   'invoke_tool',
   'emit_event',
   'call_service',
-  'publish_ui_state',
 ]);
 
 const configurationProperty = z
@@ -106,40 +87,11 @@ const toolDeclaration = z.object({
     .optional(),
 });
 
-const uiContribution = z
-  .object({
-    id: z.string().min(1).max(128),
-    surface: z.enum(SURFACES),
-    slot: z
-      .string()
-      .regex(/^[a-z][a-z0-9]*(?:[.-][a-z0-9]+)*$/u)
-      .optional(),
-    slots: z
-      .array(z.string().regex(/^[a-z][a-z0-9]*(?:[.-][a-z0-9]+)*$/u))
-      .max(32)
-      .optional(),
-    priority: z.number().int().min(-10_000).max(10_000),
-    document: z
-      .string()
-      .min(1)
-      .max(1024 * 1024),
-  })
-  .superRefine((input, context) => {
-    if (input.surface === 'app.slot' && !input.slot) {
-      context.addIssue({
-        code: z.ZodIssueCode.custom,
-        path: ['slot'],
-        message: 'slot is required for app.slot',
-      });
-    }
-    if (input.surface !== 'app.slot' && input.slot !== undefined) {
-      context.addIssue({
-        code: z.ZodIssueCode.custom,
-        path: ['slot'],
-        message: 'slot is only valid for app.slot',
-      });
-    }
-  });
+const clientPackageId = z
+  .string()
+  .regex(/^(?:@[a-z0-9][a-z0-9._-]*\/[a-z0-9][a-z0-9._-]*|[a-z0-9][a-z0-9._-]*)$/u)
+  .max(128);
+const clientToolName = z.string().regex(/^[A-Za-z][A-Za-z0-9_-]{0,127}$/u);
 
 const customEventName = z
   .string()
@@ -245,29 +197,13 @@ const definePackageInput = z
       .optional(),
     ui: z
       .object({
-        contributions: z.array(uiContribution).min(1).max(16),
-        permissions: z.object({
-          network: z.boolean(),
-          hostState: z.boolean().default(false),
-          sessionAccess: z.boolean().default(false),
-        }),
-        host: z
-          .object({
-            source: z
-              .string()
-              .min(1)
-              .max(1024 * 1024),
-            methods: z
-              .array(
-                z.object({
-                  name: z.string().regex(/^[A-Za-z][A-Za-z0-9_-]{0,127}$/u),
-                  handler: z.string().regex(/^[A-Za-z][A-Za-z0-9_-]{0,127}$/u),
-                }),
-              )
-              .min(1)
-              .max(64),
-          })
-          .optional(),
+        source: z
+          .string()
+          .min(1)
+          .max(1024 * 1024),
+        inject: z.array(clientPackageId).max(64).default([]),
+        external: z.array(clientPackageId).max(64).default([]),
+        tools: z.array(clientToolName).max(64).default([]),
       })
       .optional(),
   })
@@ -276,6 +212,15 @@ const definePackageInput = z
       context.addIssue({
         code: z.ZodIssueCode.custom,
         message: 'define_package requires runtime or ui contributions',
+      });
+    }
+    const runtimeTools = new Set(input.runtime?.tools.map(({ name }) => name) ?? []);
+    for (const [index, name] of (input.ui?.tools ?? []).entries()) {
+      if (runtimeTools.has(name)) continue;
+      context.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ['ui', 'tools', index],
+        message: `UI client Tool must be declared by the same Runtime: ${name}`,
       });
     }
   });
@@ -311,7 +256,6 @@ export class HostExtensionPackageManagementTools {
       this.#invokeTool(),
       this.#emitEvent(),
       this.#callService(),
-      this.#publishUiState(),
     ]);
   }
 
@@ -363,20 +307,12 @@ export class HostExtensionPackageManagementTools {
           : {}),
         ...(input.ui
           ? {
-              uiContributionIds: input.ui.contributions.map(({ id }) => id),
-              uiDocumentBytes: input.ui.contributions.reduce(
-                (total, { document }) => total + Buffer.byteLength(document),
-                0,
-              ),
-              uiDocumentSha256: input.ui.contributions.map(({ document }) => digest(document)),
-              uiPermissions: input.ui.permissions,
-              ...(input.ui.host
-                ? {
-                    uiHostMethods: input.ui.host.methods.map(({ name }) => name),
-                    uiHostSourceBytes: Buffer.byteLength(input.ui.host.source),
-                    uiHostSourceSha256: digest(input.ui.host.source),
-                  }
-                : {}),
+              uiContributionIds: [input.id],
+              uiClientBytes: Buffer.byteLength(input.ui.source),
+              uiClientSha256: digest(input.ui.source),
+              uiInject: input.ui.inject,
+              uiExternal: input.ui.external,
+              uiToolNames: input.ui.tools,
             }
           : {}),
         configurationKeys: Object.keys(input.configuration?.properties ?? {}),
@@ -384,11 +320,11 @@ export class HostExtensionPackageManagementTools {
           .filter(([, property]) => property.secret === true)
           .map(([key]) => key),
         historyProjectionNotice:
-          'Full trusted Extension source plus UI documents were accepted and intentionally redacted from model history.',
+          'Full trusted Extension runtime and client source were accepted and intentionally redacted from model history.',
       }),
       impl: async (input: z.infer<typeof definePackageInput>) => {
         if (input.runtime) assertSupportedSource(input.runtime.source, 'Runtime');
-        if (input.ui?.host) assertSupportedSource(input.ui.host.source, 'UI Host');
+        if (input.ui) assertSupportedClientSource(input.ui.source);
         const draft = join(this.#draftRoot, randomUUID());
         try {
           await mkdir(draft, { recursive: true, mode: 0o700 });
@@ -562,27 +498,6 @@ export class HostExtensionPackageManagementTools {
     });
   }
 
-  #publishUiState(): MakaTool {
-    return Object.freeze({
-      name: 'publish_ui_state',
-      description:
-        'Publish structured business state to every active Desktop UI Entry for one Extension that allows Host state.',
-      parameters: publishUiStateInput,
-      categoryHint: 'client_capability',
-      recoveryMode: 'idempotent',
-      permissionArgs: (input: z.infer<typeof publishUiStateInput>) => ({
-        extensionId: input.extensionId,
-        key: input.key,
-        valueRedacted: true,
-        valueSha256: digest(JSON.stringify(input.value) ?? 'null'),
-      }),
-      impl: async (input: z.infer<typeof publishUiStateInput>) => {
-        await this.controller.publishUiState(input.extensionId, input.key, input.value);
-        return { extensionId: input.extensionId, key: input.key, published: true };
-      },
-    });
-  }
-
   async #stopEntries(slots: ReturnType<typeof packageEntrySlots>): Promise<void> {
     const catalog = unwrap(
       await this.controller.handlers['extension.composition.query']({}, this.#connection),
@@ -666,22 +581,11 @@ export class HostExtensionPackageManagementTools {
 
   async #writeUi(draft: string, input: z.infer<typeof definePackageInput>): Promise<void> {
     const ui = input.ui!;
-    await mkdir(join(draft, 'documents'), { recursive: true, mode: 0o700 });
-    if (ui.host) await mkdir(join(draft, 'host'), { mode: 0o700 });
-    await Promise.all(
-      ui.contributions.map((item, index) =>
-        writeFile(join(draft, 'documents', `${index + 1}.html`), item.document, {
-          encoding: 'utf8',
-          mode: 0o600,
-        }),
-      ),
-    );
-    if (ui.host) {
-      await writeFile(join(draft, 'host', 'service.mjs'), ui.host.source, {
-        encoding: 'utf8',
-        mode: 0o600,
-      });
-    }
+    await mkdir(join(draft, 'client'), { recursive: true, mode: 0o700 });
+    await writeFile(join(draft, 'client', 'index.js'), ui.source, {
+      encoding: 'utf8',
+      mode: 0o600,
+    });
   }
 
   async #writeManifest(draft: string, input: z.infer<typeof definePackageInput>): Promise<void> {
@@ -708,18 +612,12 @@ export class HostExtensionPackageManagementTools {
       ...(input.ui
         ? {
             ui: {
-              contributions: input.ui.contributions.map((item, index) => ({
-                id: item.id,
-                surface: item.surface,
-                ...(item.slot ? { slot: item.slot } : {}),
-                ...(item.slots ? { slots: item.slots } : {}),
-                priority: item.priority,
-                document: `documents/${index + 1}.html`,
-              })),
-              ...(input.ui.host
-                ? { host: { entry: 'host/service.mjs', methods: input.ui.host.methods } }
-                : {}),
-              permissions: input.ui.permissions,
+              client: {
+                entry: 'client/index.js',
+                inject: input.ui.inject,
+                external: input.ui.external,
+                tools: input.ui.tools,
+              },
             },
           }
         : {}),
@@ -740,6 +638,14 @@ function assertSupportedSource(source: string, label: string): void {
   }
   if (!/\bexport\s+default\b/u.test(source)) {
     throw new Error(`${label} package source must export one default handler object.`);
+  }
+}
+
+function assertSupportedClientSource(source: string): void {
+  if (!source.includes('__MakaModuleLoader__') || !source.includes('.load(')) {
+    throw new Error(
+      'UI client source must register one factory through window.__MakaModuleLoader__.load().',
+    );
   }
 }
 

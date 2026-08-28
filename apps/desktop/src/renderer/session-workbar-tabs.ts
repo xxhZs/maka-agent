@@ -7,7 +7,13 @@ export type SessionWorkbarTabKind =
   | 'browser'
   | 'files'
   | 'inspector'
+  | 'extension'
   | 'side-chat';
+
+export type BuiltinSessionWorkbarTabKind = Exclude<
+  SessionWorkbarTabKind,
+  'side-chat' | 'extension'
+>;
 
 export interface SessionWorkbarTab {
   id: string;
@@ -59,7 +65,7 @@ const PERSISTED_KINDS = new Set<SessionWorkbarTabKind>([
   'inspector',
 ]);
 
-const STATIC_TAB_IDS: Record<Exclude<SessionWorkbarTabKind, 'side-chat'>, string> = {
+const STATIC_TAB_IDS: Record<BuiltinSessionWorkbarTabKind, string> = {
   review: 'workbar:review',
   terminal: 'workbar:terminal',
   tasks: 'workbar:tasks',
@@ -69,7 +75,7 @@ const STATIC_TAB_IDS: Record<Exclude<SessionWorkbarTabKind, 'side-chat'>, string
 };
 
 export function staticSessionWorkbarTabId(
-  kind: Exclude<SessionWorkbarTabKind, 'side-chat'>,
+  kind: BuiltinSessionWorkbarTabKind,
 ): string {
   return STATIC_TAB_IDS[kind];
 }
@@ -316,7 +322,7 @@ export function openSessionWorkbarTab(
 
 export function openStaticSessionWorkbarTab(
   state: SessionWorkbarTabsState,
-  kind: Exclude<SessionWorkbarTabKind, 'side-chat'>,
+  kind: BuiltinSessionWorkbarTabKind,
 ): SessionWorkbarTabsState {
   return openSessionWorkbarTab(state, {
     id: staticSessionWorkbarTabId(kind),

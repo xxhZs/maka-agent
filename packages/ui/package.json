@@ -12,6 +12,9 @@
     "./assistant-stream": "./dist/assistant-stream.js",
     "./icons": "./dist/icons.js",
     "./maka-uri": "./dist/maka-uri.js",
+    "./ui-slots": "./dist/ui-slots.js",
+    "./client-plugin-runtime": "./dist/client-plugin-runtime.js",
+    "./ui-slot-catalog": "./dist/ui-slot-catalog.js",
     "./styles.css": "./src/styles.css"
   },
   "scripts": {

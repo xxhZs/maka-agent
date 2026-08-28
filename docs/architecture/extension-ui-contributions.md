@@ -1,35 +1,42 @@
-# Extension UI contributions
+# Extension Client contributions
 
-Extension UI is projected into the `desktop-ui` runtime root. UI may use a
-separate Context/Fiber from Host runtime code because renderer authority,
-failure, and cleanup boundaries differ. Maka does not create a shared Fiber
-solely to make both trees look isomorphic.
+Extension UI is the Client half of the unified Extension package. A package
+declares one prebuilt classic-script factory at `ui.client.entry`; the same
+Composition Entry lifecycle that owns its Tool, Hook, Event, Service, and Timer
+contributions owns this Client generation.
 
-## Surfaces and isolation
+## Slot contract
 
-The trusted renderer owns Maka's native shell. Extensions may declare allowed
-root, overlay, or named-slot surfaces. Nested slots do not grant DOM access to
-Maka or sibling frames. Ordering is deterministic.
+Maka implements the DSH `b150a551b` UI boundary: a typed `SlotMap`,
+`single/list/keyed/chain` composition, `root/session/session-maybe` scopes,
+typed owner and key props, selectors, priority, fallbacks, child Slot ownership,
+and recursive disposal. The catalog contains the exact 48 DSH Slot names.
 
-Each document runs in a sandboxed opaque-origin iframe. A token-bound bridge
-provides declared configuration, Host state, RPC, optional Session access, and
-safe-mode escape. Every request is checked against the active Entry, Fiber
-generation, contribution identity, and permissions.
+The Renderer has real mount positions for the 45 contracts represented by
+Maka's current product UI. `conversation.chat.commandview`,
+`conversation.details.tool`, and `tool.view.cordis` remain typed contracts until
+Maka has corresponding business surfaces; no placeholder DOM is invented.
+
+## Loading and trust
+
+The Runtime Host projects active Client bytes, digest, and declared
+`inject`/`external` dependencies for the `desktop-ui` scope. Electron serves an
+exact active bundle through the private `maka-client-plugin:` protocol. The
+Renderer loads the factory against host-owned React, JSX Runtime, and
+`@maka/ui` singletons and exposes only the plugin lifecycle context.
+
+Client code is trusted and runs in the host Renderer realm. There is no iframe,
+opaque origin, postMessage bridge, separate UI state store, or compatibility
+path for the retired HTML contribution format.
 
 ## Lifecycle
 
-Documents are package bytes; enabled state, configuration, hierarchy, and
-diagnostics live only in the Entry Tree. Candidate UI is invisible until
-activation succeeds. Success switches the complete runtime snapshot; failure
-leaves the active Fiber and frames current.
+Registrations, CSS, and arbitrary effects are staged before activation. A
+successful update swaps them atomically; a failed candidate leaves the current
+generation active. Disable, stop, delete, dependency loss, and Renderer teardown
+dispose owned effects and restore Slot fallbacks. Restart reconstructs the
+Client graph from the same durable Entry Tree as every other contribution.
 
-Disable/remove destroys frames and revokes bridge tokens. Restart reconstructs
-the `desktop-ui` projection from the Entry Tree. Host-owned UI state may survive
-frame reloads, but is not composition state and does not select package
-versions.
-
-Tool visualization writes structured results to Host state, allowing real Tool
-execution to update sandboxed UI without renderer DOM authority.
-
-Tests cover surface ordering, sandbox and bridge permissions, state/config,
-nested slots, safe mode, failed replacement, cleanup, and Electron restart.
+Tests cover the exact Slot catalog, composition semantics, typed rendering,
+dependency ordering, atomic replacement, cleanup, package activation, private
+bundle transport, and Electron lifecycle behavior.

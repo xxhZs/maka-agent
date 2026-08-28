@@ -1,26 +1,16 @@
 import { createHash } from 'node:crypto';
 import type { MakaContributionContext } from './plugin-runtime.js';
 
-export const EXTENSION_UI_DOCUMENT_MAX_BYTES = 1024 * 1024;
-export const EXTENSION_UI_SURFACES = ['app.root', 'app.overlay', 'app.slot'] as const;
-export type ExtensionUiSurface = (typeof EXTENSION_UI_SURFACES)[number];
-export const EXTENSION_UI_SLOT_PATTERN = /^[a-z][a-z0-9]*(?:[.-][a-z0-9]+)*$/u;
+export const EXTENSION_UI_BUNDLE_MAX_BYTES = 1024 * 1024;
 
 export interface ExtensionUiContribution {
   readonly id: string;
-  readonly surface: ExtensionUiSurface;
-  /** Named composition seat. Required only for app.slot contributions. */
-  readonly slot?: string;
-  /** Child composition seats declared by this contribution. */
-  readonly slots?: readonly string[];
-  readonly priority: number;
-  readonly document: string;
-  /** Sandboxed documents are offline unless this explicit capability is true. */
-  readonly network: boolean;
-  readonly hostState?: boolean;
-  readonly hostMethods?: readonly string[];
-  /** Explicit authority for a full-root document to drive Maka Sessions. */
-  readonly sessionAccess?: boolean;
+  /** Trusted Renderer factory bundle. It registers typed React components through ctx.slots. */
+  readonly bundle: string;
+  readonly inject?: readonly string[];
+  readonly external?: readonly string[];
+  /** Same-package Runtime Tools this trusted Client bundle may invoke. */
+  readonly tools?: readonly string[];
 }
 
 export interface ExtensionUiContributionInspection {
@@ -29,16 +19,11 @@ export interface ExtensionUiContributionInspection {
   readonly extensionId: string;
   readonly generation: number;
   readonly id: string;
-  readonly surface: ExtensionUiSurface;
-  readonly slot?: string;
-  readonly slots: readonly string[];
-  readonly priority: number;
-  readonly document: string;
-  readonly documentSha256: string;
-  readonly network: boolean;
-  readonly hostState: boolean;
-  readonly hostMethods: readonly string[];
-  readonly sessionAccess: boolean;
+  readonly bundle: string;
+  readonly bundleSha256: string;
+  readonly inject: readonly string[];
+  readonly external: readonly string[];
+  readonly tools: readonly string[];
 }
 
 export type ExtensionUiReadiness = 'pending' | 'ready' | 'failed';
@@ -131,11 +116,10 @@ export class ExtensionUiContributionRegistry {
       extensionId: context.extensionId,
       generation: context.generation,
       ...contribution,
-      slots: Object.freeze([...(contribution.slots ?? [])]),
-      hostState: contribution.hostState === true,
-      hostMethods: Object.freeze([...(contribution.hostMethods ?? [])]),
-      sessionAccess: contribution.sessionAccess === true,
-      documentSha256: createHash('sha256').update(contribution.document).digest('hex'),
+      inject: Object.freeze([...(contribution.inject ?? [])]),
+      external: Object.freeze([...(contribution.external ?? [])]),
+      tools: Object.freeze([...(contribution.tools ?? [])]),
+      bundleSha256: createHash('sha256').update(contribution.bundle).digest('hex'),
       token: Symbol(contribution.id),
     });
     entries.push(entry);
@@ -187,71 +171,27 @@ export function validateExtensionUiContribution(contribution: ExtensionUiContrib
     throw new ExtensionUiContributionError('invalid_ui', 'UI contribution is required');
   }
   validateIdentity('UI contribution id', contribution.id);
-  if (!EXTENSION_UI_SURFACES.includes(contribution.surface)) {
-    throw new ExtensionUiContributionError('invalid_ui', 'UI surface is invalid');
-  }
-  if (contribution.surface === 'app.slot') {
-    if (
-      typeof contribution.slot !== 'string' ||
-      !EXTENSION_UI_SLOT_PATTERN.test(contribution.slot) ||
-      Buffer.byteLength(contribution.slot, 'utf8') > 128
-    ) {
-      throw new ExtensionUiContributionError('invalid_ui', 'UI slot name is invalid');
-    }
-  } else if (contribution.slot !== undefined) {
+  if (
+    typeof contribution.bundle !== 'string' ||
+    contribution.bundle.length === 0 ||
+    Buffer.byteLength(contribution.bundle, 'utf8') > EXTENSION_UI_BUNDLE_MAX_BYTES
+  ) {
     throw new ExtensionUiContributionError(
       'invalid_ui',
-      'Only an app.slot contribution may declare a slot name',
+      'UI client bundle is invalid or too large',
     );
   }
+  validateDependencies('inject', contribution.inject);
+  validateDependencies('external', contribution.external);
   if (
-    contribution.slots !== undefined &&
-    (!Array.isArray(contribution.slots) ||
-      contribution.slots.length > 32 ||
-      contribution.slots.some(
-        (slot) =>
-          typeof slot !== 'string' ||
-          !EXTENSION_UI_SLOT_PATTERN.test(slot) ||
-          Buffer.byteLength(slot, 'utf8') > 128,
-      ) ||
-      new Set(contribution.slots).size !== contribution.slots.length)
+    contribution.tools !== undefined &&
+    (!Array.isArray(contribution.tools) ||
+      contribution.tools.length > 64 ||
+      contribution.tools.some((name) => !/^[A-Za-z][A-Za-z0-9_-]{0,127}$/u.test(name)) ||
+      new Set(contribution.tools.map((name) => name.toLowerCase())).size !==
+        contribution.tools.length)
   ) {
-    throw new ExtensionUiContributionError('invalid_ui', 'UI child slots are invalid');
-  }
-  if (!Number.isSafeInteger(contribution.priority) || Math.abs(contribution.priority) > 10_000) {
-    throw new ExtensionUiContributionError('invalid_ui', 'UI priority is invalid');
-  }
-  if (
-    typeof contribution.document !== 'string' ||
-    contribution.document.length === 0 ||
-    Buffer.byteLength(contribution.document, 'utf8') > EXTENSION_UI_DOCUMENT_MAX_BYTES
-  ) {
-    throw new ExtensionUiContributionError('invalid_ui', 'UI document is invalid or too large');
-  }
-  if (typeof contribution.network !== 'boolean') {
-    throw new ExtensionUiContributionError('invalid_ui', 'UI network capability is invalid');
-  }
-  if (contribution.hostState !== undefined && typeof contribution.hostState !== 'boolean') {
-    throw new ExtensionUiContributionError('invalid_ui', 'UI Host state capability is invalid');
-  }
-  if (contribution.sessionAccess !== undefined && typeof contribution.sessionAccess !== 'boolean') {
-    throw new ExtensionUiContributionError('invalid_ui', 'UI Session access capability is invalid');
-  }
-  if (contribution.sessionAccess === true && contribution.surface !== 'app.root') {
-    throw new ExtensionUiContributionError(
-      'invalid_ui',
-      'Only a complete app.root UI may request Session access',
-    );
-  }
-  if (
-    contribution.hostMethods !== undefined &&
-    (!Array.isArray(contribution.hostMethods) ||
-      contribution.hostMethods.length > 64 ||
-      contribution.hostMethods.some(
-        (method) => typeof method !== 'string' || !/^[A-Za-z][A-Za-z0-9_-]{0,127}$/u.test(method),
-      ))
-  ) {
-    throw new ExtensionUiContributionError('invalid_ui', 'UI Host methods are invalid');
+    throw new ExtensionUiContributionError('invalid_ui', 'UI client Tool allowlist is invalid');
   }
 }
 
@@ -281,12 +221,23 @@ function compareUi(
   left: ExtensionUiContributionInspection,
   right: ExtensionUiContributionInspection,
 ): number {
-  return (
-    compareString(left.surface, right.surface) ||
-    right.priority - left.priority ||
-    compareString(left.extensionId, right.extensionId) ||
-    compareString(left.id, right.id)
-  );
+  return compareString(left.extensionId, right.extensionId) || compareString(left.id, right.id);
+}
+
+function validateDependencies(label: string, value: readonly string[] | undefined): void {
+  if (
+    value !== undefined &&
+    (!Array.isArray(value) ||
+      value.length > 64 ||
+      value.some(
+        (id) =>
+          typeof id !== 'string' ||
+          !/^(?:@[a-z0-9][a-z0-9._-]*\/[a-z0-9][a-z0-9._-]*|[a-z0-9][a-z0-9._-]*)$/u.test(id),
+      ) ||
+      new Set(value).size !== value.length)
+  ) {
+    throw new ExtensionUiContributionError('invalid_ui', `UI ${label} dependencies are invalid`);
+  }
 }
 
 function compareString(left: string, right: string): number {

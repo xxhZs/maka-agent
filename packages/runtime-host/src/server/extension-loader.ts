@@ -24,7 +24,6 @@ import { PluginHookActivation } from './plugin-hook-activation.js';
 import { type InstalledEventPackage } from './plugin-hook-manifest.js';
 import { type InstalledToolPackage } from './plugin-runtime-manifest.js';
 import { type InstalledUiPackage } from './plugin-ui-manifest.js';
-import { UiPackageService } from './ui-package-service.js';
 import { dirname, join } from 'node:path';
 import { exportExtensionBundle, materializeExtensionPackage } from './extension-bundle.js';
 import { type ExtensionPackageManifest } from './extension-package-manifest.js';
@@ -74,9 +73,6 @@ export interface HostTrustedToolExtensionLoader {
       input: unknown,
       context: ExtensionServiceInvocationContext,
     ) => Promise<unknown>,
-  ): void;
-  setUiStatePublisher?(
-    publisher: (extensionId: string, key: string, value: unknown) => Promise<void>,
   ): void;
 }
 
@@ -184,8 +180,6 @@ export class InstalledPluginPackageLoader implements HostTrustedToolExtensionLoa
   ) => Promise<unknown> = async () => {
     throw new Error('Extension Service calls are unavailable');
   };
-  #publishUiState: (extensionId: string, key: string, value: unknown) => Promise<void> = async () =>
-    undefined;
 
   constructor(
     private readonly statics: StaticTrustedToolExtensionLoader,
@@ -221,12 +215,6 @@ export class InstalledPluginPackageLoader implements HostTrustedToolExtensionLoa
     this.#callService = caller;
   }
 
-  setUiStatePublisher(
-    publisher: (extensionId: string, key: string, value: unknown) => Promise<void>,
-  ): void {
-    this.#publishUiState = publisher;
-  }
-
   async list(): Promise<readonly TrustedExtensionProjection[]> {
     const combined = [...(await this.statics.list())];
     for (const installed of await this.packages.list()) {
@@ -260,7 +248,7 @@ export class InstalledPluginPackageLoader implements HostTrustedToolExtensionLoa
         ? {
             installed: ui,
             store: {
-              readDocument: (_package, path) => this.packages.readText(installed, path),
+              readClientBundle: (_package, path) => this.packages.readClientBundle(installed, path),
             },
           }
         : undefined,
@@ -269,7 +257,6 @@ export class InstalledPluginPackageLoader implements HostTrustedToolExtensionLoa
       configurationFor: this.#configurationFor,
       emitEvent: (...args) => this.#emitEvent(...args),
       callService: (...args) => this.#callService(...args),
-      publishUiState: (...args) => this.#publishUiState(...args),
     });
   }
 
@@ -403,7 +390,7 @@ function projectPackage(installed: InstalledToolPackage): TrustedExtensionProjec
 
 async function uiPackageInput(
   store: {
-    readDocument(installed: InstalledUiPackage, path: string): Promise<string>;
+    readClientBundle(installed: InstalledUiPackage, path: string): Promise<string>;
   },
   installed: InstalledUiPackage,
   metadata?: ExtensionPackageManifest,
@@ -421,32 +408,16 @@ async function uiPackageInput(
           ),
         }
       : {}),
-    ui: Object.freeze(
-      await Promise.all(
-        installed.manifest.ui.map(async (item) =>
-          Object.freeze({
-            id: item.id,
-            surface: item.surface,
-            ...(item.slot ? { slot: item.slot } : {}),
-            slots: item.slots,
-            priority: item.priority,
-            document: await store.readDocument(installed, item.document),
-            network: installed.manifest.permissions.network,
-            hostState: installed.manifest.permissions.hostState,
-            hostMethods: Object.freeze(
-              installed.manifest.host?.methods.map(({ name }) => name) ?? [],
-            ),
-            sessionAccess:
-              installed.manifest.permissions.sessionAccess && item.surface === 'app.root',
-          }),
-        ),
-      ),
-    ),
-    healthCheck: (agents?: PackageAgentRuntime, context?: Context) =>
-      new UiPackageService(
-        () => agents,
-        () => context,
-      ).healthCheck(installed),
+    ui: Object.freeze([
+      Object.freeze({
+        id: installed.extensionId,
+        bundle: await store.readClientBundle(installed, installed.manifest.client.entry),
+        inject: installed.manifest.client.inject,
+        external: installed.manifest.client.external,
+        tools: installed.manifest.client.tools,
+      }),
+    ]),
+    healthCheck: async () => undefined,
   });
 }
 
@@ -454,7 +425,7 @@ function projectUiPackage(installed: InstalledUiPackage): TrustedExtensionProjec
   return Object.freeze({
     extensionId: installed.extensionId,
     toolNames: Object.freeze([]),
-    uiContributionIds: Object.freeze(installed.manifest.ui.map(({ id }) => id).sort(compareString)),
+    uiContributionIds: Object.freeze([installed.extensionId]),
     eventContributionIds: Object.freeze([]),
   });
 }
@@ -492,7 +463,7 @@ async function combinedPackageInput(input: {
   readonly ui?: {
     readonly installed: InstalledUiPackage;
     readonly store: {
-      readDocument(installed: InstalledUiPackage, path: string): Promise<string>;
+      readClientBundle(installed: InstalledUiPackage, path: string): Promise<string>;
     };
   };
   readonly event?: InstalledEventPackage;
@@ -513,7 +484,6 @@ async function combinedPackageInput(input: {
     payload: unknown,
     context: ExtensionServiceInvocationContext,
   ) => Promise<unknown>;
-  readonly publishUiState: (extensionId: string, key: string, value: unknown) => Promise<void>;
 }): Promise<HostPreparedPluginPackageInput> {
   const installed = input.tool ?? input.ui?.installed ?? input.event;
   if (!installed) throw new HostExtensionLoaderError('not_found', 'Extension package is missing');
@@ -621,21 +591,7 @@ async function combinedPackageInput(input: {
           )
         : undefined;
       return {
-        tools: Object.freeze(
-          (toolActivation?.tools() ?? []).map((tool) => {
-            const stateKey = input.tool?.manifest.tools.find(({ name }) => name === tool.name)
-              ?.visualization?.stateKey;
-            if (!stateKey) return tool;
-            return Object.freeze({
-              ...tool,
-              impl: async (...args: Parameters<typeof tool.impl>) => {
-                const result = await tool.impl(...args);
-                await input.publishUiState(installed.extensionId, stateKey, result);
-                return result;
-              },
-            });
-          }),
-        ),
+        tools: Object.freeze(toolActivation?.tools() ?? []),
         ...(eventActivation
           ? {
               events: eventActivation.events(),
@@ -731,15 +687,7 @@ function projectContract(
           description: item.description,
         }),
       ) ?? []),
-      ...(ui?.manifest.ui.map((item) =>
-        Object.freeze({
-          kind: 'ui' as const,
-          id: item.id,
-          surface: item.surface,
-          ...(item.slot ? { slot: item.slot } : {}),
-          ...(item.slots.length ? { slots: item.slots } : {}),
-        }),
-      ) ?? []),
+      ...(ui ? [Object.freeze({ kind: 'ui' as const, id: ui.extensionId })] : []),
       ...(event?.manifest.events.map((item) =>
         Object.freeze({
           kind: 'event' as const,

@@ -122,7 +122,6 @@ import {
 } from './extension-loader.js';
 import { HostExtensionRuntime, PROFILE_EXTENSION_SCOPE } from './extension-runtime.js';
 import { HostPluginCompositionStore } from './plugin-composition-store.js';
-import { HostExtensionUiStateStore } from './extension-ui-state-store.js';
 import { PluginPackageStore } from './plugin-package-store.js';
 import { HostExtensionPackageManagementTools } from './extension-package-management-tools.js';
 import { HostGoalCoordinator } from './goal-coordinator.js';
@@ -256,8 +255,7 @@ export async function createExecutionRuntimeHostComposition(
     extensionLoader,
     new HostPluginCompositionStore(context.owner.controlDirectory),
     context.requestDrain,
-    new HostExtensionUiStateStore(context.owner.controlDirectory),
-    pluginPackageStore,
+    async (sessionId) => (await stores.sessionStore.readHeaderSnapshot(sessionId)).cwd,
   );
   const extensionPackageManagement = new HostExtensionPackageManagementTools(
     context.owner.controlDirectory,

@@ -259,7 +259,7 @@ test('file review package links Tool, UI, Hook, Service, Event, and Timer throug
     const installed = await client.request('extension.package.install', { sourcePath: source });
     assert.equal(installed.extensionId, 'file-review-package');
     assert.deepEqual(installed.toolNames, ['ReviewDocument']);
-    assert.ok(installed.uiContributionIds.some((id) => id.includes('review-console')));
+    assert.deepEqual(installed.uiContributionIds, ['file-review-package']);
     assert.ok(installed.eventContributionIds.some((id) => id.includes('review.completed')));
     assert.ok(installed.serviceContributionIds?.some((id) => id.includes('policy')));
     assert.ok(installed.timerContributionIds?.some((id) => id.includes('refresh')));
@@ -530,10 +530,10 @@ export default {
 
 async function createFileReviewPackage(source: string): Promise<void> {
   await mkdir(join(source, 'dist'), { recursive: true });
-  await mkdir(join(source, 'documents'), { recursive: true });
+  await mkdir(join(source, 'client'), { recursive: true });
   await writeFile(
-    join(source, 'documents', 'review-console.html'),
-    '<!doctype html><title>File Review Console</title><main>WAITING</main>',
+    join(source, 'client', 'index.js'),
+    'window.__MakaModuleLoader__.load({id:"file-review-package",factory:()=>({default:()=>undefined})});',
   );
   await writeFile(
     join(source, 'maka.extension.json'),
@@ -541,16 +541,7 @@ async function createFileReviewPackage(source: string): Promise<void> {
       schemaVersion: 1,
       id: 'file-review-package',
       ui: {
-        contributions: [
-          {
-            id: 'review-console',
-            surface: 'app.slot',
-            slot: 'conversation.header',
-            priority: 20,
-            document: 'documents/review-console.html',
-          },
-        ],
-        permissions: { network: false },
+        client: { entry: 'client/index.js' },
       },
       runtime: {
         entry: 'dist/index.mjs',

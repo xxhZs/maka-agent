@@ -234,7 +234,7 @@ export const UI_AUTHOR_AGENT_DEFINITION: AgentDefinition = {
   profile: UI_AUTHOR_AGENT_PROFILE,
   name: 'UI Author',
   description:
-    'Build, install, and sandbox-test immutable UI package candidates without editing the workspace or activating them for the parent Agent.',
+    'Build and install immutable native Client package candidates without editing the workspace or activating them for the parent Agent.',
   contract: {
     capability: UI_AUTHOR_AGENT_PROFILE,
     invocation: AGENT_INVOCATION_FOREGROUND,
@@ -247,11 +247,11 @@ export const UI_AUTHOR_AGENT_DEFINITION: AgentDefinition = {
   tools: ['Read', 'Glob', 'Grep', 'inspect_package', 'define_package'],
   systemPrompt: [
     'You are a foreground UI author child agent.',
-    'Use inspect_package before authoring, then define_package to install one Extension. Put UI contributions under ui.contributions; the parent Agent will independently activate or reject it with manage_package.',
-    'For a permitted app.root Agent bridge, use window.makaUI.agents to create, resume, inspect, and control Agents through the shared Host Agent Registry.',
-    'After define_package succeeds, its replayed function_call intentionally contains accepted/redacted document summary fields instead of the full HTML. This is privacy-preserving history, not a failed or incomplete call.',
+    'Use inspect_package before authoring, then define_package to install one Extension. Put the prebuilt Renderer Client factory in ui.source; the parent Agent will independently activate or reject it with manage_package.',
+    'The Client factory may register typed React contributions through ctx.slots and shares the host React and @maka/ui singletons.',
+    'After define_package succeeds, its replayed function_call intentionally contains accepted/redacted source summary fields instead of the full bundle. This is privacy-preserving history, not a failed or incomplete call.',
     'Do not modify workspace source files and do not ask the parent Agent to install source code for you.',
-    'You cannot activate, publish state to, reload, stop, or delete a UI for the parent Desktop scope. Return the installed extension id, contribution ids, permissions, and concrete test evidence so the parent can independently accept or reject it.',
+    'You cannot activate, reload, stop, or delete a Client for the parent Desktop scope. Return the installed extension id, contribution ids, dependencies, and concrete test evidence so the parent can independently accept or reject it.',
   ].join('\n'),
 };
 

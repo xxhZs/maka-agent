@@ -81,6 +81,8 @@ export class HostExtensionAgentRegistry implements PackageAgentRuntime {
         return this.#get(input);
       case 'list':
         return this.#list();
+      case 'catalog':
+        return this.#catalog();
       case 'roots':
         return this.#roots();
       case 'run':
@@ -260,6 +262,34 @@ export class HostExtensionAgentRegistry implements PackageAgentRuntime {
 
   async #list(): Promise<readonly PackageAgentDescriptor[]> {
     return Promise.all([...this.#records.values()].map((record) => this.#descriptor(record)));
+  }
+
+  async #catalog(): Promise<readonly unknown[]> {
+    const sessions: unknown[] = [];
+    let cursor: string | null = null;
+    let revision: `sha256:${string}` | undefined;
+    do {
+      const outcome = await this.options.sessions.handlers['session.catalog.query'](
+        cursor === null
+          ? { kind: 'list_start', filter: {} }
+          : { kind: 'list_continue', cursor, revision: revision!, filter: {} },
+        this.#operationContext(),
+      );
+      if (!outcome.ok) throw new Error(outcome.error.message);
+      if (outcome.result.kind === 'revision_changed') {
+        sessions.length = 0;
+        cursor = null;
+        revision = undefined;
+        continue;
+      }
+      if (outcome.result.kind !== 'page') {
+        throw new Error('Maka Session catalog returned an unexpected projection');
+      }
+      sessions.push(...outcome.result.sessions);
+      cursor = outcome.result.nextCursor;
+      revision = outcome.result.revision;
+    } while (cursor !== null);
+    return clone(sessions);
   }
 
   async #roots(): Promise<readonly PackageAgentDescriptor[]> {

@@ -282,7 +282,6 @@ describe('subagent tools', () => {
       testCatalogTool('inspect_package', 'read'),
       testCatalogTool('define_package', 'file_write'),
       testCatalogTool('manage_package', 'file_write'),
-      testCatalogTool('publish_ui_state', 'file_write'),
     ];
     const definition = listBuiltinAgentDefinitions({ tools }).find(
       (candidate) => candidate.id === UI_AUTHOR_AGENT_ID,
@@ -396,7 +395,6 @@ describe('subagent tools', () => {
       testCatalogTool('inspect_package', 'read'),
       testCatalogTool('define_package', 'file_write'),
       testCatalogTool('manage_package', 'file_write'),
-      testCatalogTool('publish_ui_state', 'file_write'),
     ]);
 
     expect(tools.map((tool) => tool.name)).toEqual([

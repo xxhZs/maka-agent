@@ -266,7 +266,7 @@ const connection = {
   acquireResidency: () => ({ release: () => undefined }),
 };
 
-test('combined package installation rolls back a newly installed Tool when UI persistence fails', async () => {
+test('combined package installation is atomic when unified package persistence fails', async () => {
   const root = await mkdtemp(join(tmpdir(), 'maka-extension-atomic-install-'));
   const source = join(root, 'source');
   const control = join(root, 'control');
@@ -278,22 +278,14 @@ test('combined package installation rolls back a newly installed Tool when UI pe
       source: 'export default { ping: () => ({ pong: true }) };\n',
       metadata: {
         ui: {
-          contributions: [
-            {
-              id: 'combined-root',
-              surface: 'app.root',
-              priority: 0,
-              document: 'documents/root.html',
-            },
-          ],
-          permissions: { network: false },
+          client: { entry: 'client/index.js' },
         },
       },
     });
-    await mkdir(join(source, 'documents'), { recursive: true });
+    await mkdir(join(source, 'client'), { recursive: true });
     await writeFile(
-      join(source, 'documents', 'root.html'),
-      '<!doctype html><title>Combined</title>',
+      join(source, 'client', 'index.js'),
+      'window.__MakaModuleLoader__.load({id:"dev.maka.platform.combined",factory:()=>({default:()=>undefined})});',
     );
     const toolStore = new RejectingPluginPackageStore(control);
     const loader = new InstalledPluginPackageLoader(
@@ -312,6 +304,6 @@ test('combined package installation rolls back a newly installed Tool when UI pe
 
 class RejectingPluginPackageStore extends PluginPackageStore {
   override async install(): Promise<never> {
-    throw new Error('simulated UI persistence failure');
+    throw new Error('simulated package persistence failure');
   }
 }

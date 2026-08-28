@@ -6138,7 +6138,7 @@ describe('AiSdkBackend error surfaces', () => {
                   toolName: 'define_package',
                   input: JSON.stringify({
                     id: 'dev.maka.example',
-                    ui: JSON.stringify([{ id: 'stage', surface: 'app.root' }]),
+                    ui: JSON.stringify({ source: 'window.__MakaModuleLoader__.load({})' }),
                   }),
                 },
                 {
@@ -6184,7 +6184,7 @@ describe('AiSdkBackend error surfaces', () => {
             'define_package',
             z.object({
               id: z.string(),
-              ui: z.array(z.object({ id: z.string(), surface: z.string() })),
+              ui: z.object({ source: z.string() }),
             }),
           ),
           impl: async (input: unknown) => {
@@ -6203,7 +6203,7 @@ describe('AiSdkBackend error surfaces', () => {
     assert.deepEqual(executions, [
       {
         id: 'dev.maka.example',
-        ui: [{ id: 'stage', surface: 'app.root' }],
+        ui: { source: 'window.__MakaModuleLoader__.load({})' },
       },
     ]);
   });

@@ -1,4 +1,5 @@
 import {
+  createElement,
   lazy,
   Suspense,
   useEffect,
@@ -29,6 +30,7 @@ import {
   useUiLocale,
   type ChatModelChoice,
   type Composer,
+  type ClientWorkbarView,
 } from '@maka/ui';
 import {
   ICON_SIZE,
@@ -97,6 +99,8 @@ const SessionTerminalPanel = lazy(() =>
     default: module.SessionTerminalPanel,
   })),
 );
+
+const EMPTY_CLIENT_WORKBAR_VIEWS: readonly ClientWorkbarView[] = Object.freeze([]);
 
 function WorkbarPanelLoading(props: { label: string }) {
   return (
@@ -170,6 +174,8 @@ function tabLabel(
       return copy.files;
     case 'inspector':
       return copy.inspector;
+    case 'extension':
+      return tab.title?.trim() || tab.resourceRef || 'Extension';
     case 'side-chat':
       {
         if (tab.title?.trim()) return tab.title.trim();
@@ -206,7 +212,9 @@ function tabIcon(tab: SessionWorkbarTab, active: boolean): ReactNode {
               ? FolderOpen
               : tab.kind === 'inspector'
                 ? Activity
-                : MessageCircleQuestion;
+                : tab.kind === 'extension'
+                  ? Plus
+                  : MessageCircleQuestion;
   return <Icon size={ICON_SIZE.control} aria-hidden="true" className="maka-workbar-tab-icon" />;
 }
 
@@ -543,12 +551,14 @@ function SortableWorkbarTab(props: {
 }
 
 function WorkbarLauncher(props: {
-  onOpen: (kind: SessionWorkbarTabKind) => void;
+  onOpen: (kind: Exclude<SessionWorkbarTabKind, 'extension'>) => void;
+  onOpenExtension: (view: ClientWorkbarView) => void;
+  extensionViews: readonly ClientWorkbarView[];
   sideChatAvailable: boolean;
 }) {
   const copy = getDesktopConversationCopy(useUiLocale()).workbar;
   const actions: Array<{
-    kind: SessionWorkbarTabKind;
+    kind: Exclude<SessionWorkbarTabKind, 'extension'>;
     label: string;
     description: string;
     icon: typeof Activity;
@@ -626,6 +636,15 @@ function WorkbarLauncher(props: {
             onClick={() => props.onOpen(action.kind)}
           />
         ))}
+        {props.extensionViews.map((view) => (
+          <ListItem
+            key={view.key}
+            startContent={<Icon icon={Plus} size="sm" color="secondary" />}
+            label={view.title}
+            description={view.description}
+            onClick={() => props.onOpenExtension(view)}
+          />
+        ))}
       </List>
     </div>
   );
@@ -659,7 +678,12 @@ export function SessionWorkbar(props: {
   onOpenLauncher: (placement: SessionWorkbarPlacement) => void;
   onRequestOpenTab: (
     placement: SessionWorkbarPlacement,
-    kind: SessionWorkbarTabKind,
+    kind: Exclude<SessionWorkbarTabKind, 'extension'>,
+  ) => void;
+  extensionViews?: readonly ClientWorkbarView[];
+  onRequestOpenExtension?: (
+    placement: SessionWorkbarPlacement,
+    view: ClientWorkbarView,
   ) => void;
   quotes?: readonly QuoteCompanionPanelState[];
   onQuotesConsumed?: (snapshot: CompanionQuoteSnapshot) => void;
@@ -678,6 +702,7 @@ export function SessionWorkbar(props: {
   onSearchMentionFiles?: ComponentProps<typeof Composer>['onSearchMentionFiles'];
 }) {
   const copy = getDesktopConversationCopy(useUiLocale()).workbar;
+  const extensionViews = props.extensionViews ?? EMPTY_CLIENT_WORKBAR_VIEWS;
   const sessionTasks = useSessionTasks(props.sessionId);
   const taskCount = deriveTaskLedgerPanelModel(sessionTasks.tasks).activeCount;
   const [artifactCount, setArtifactCount] = useState(0);
@@ -685,6 +710,15 @@ export function SessionWorkbar(props: {
   const positionedTabs = placements.flatMap((placement) =>
     props.panelsState[placement].tabs.map((tab) => ({ placement, tab })),
   );
+  useEffect(() => {
+    const liveKeys = new Set(extensionViews.map(({ key }) => key));
+    for (const placement of placements) {
+      const stale = props.panelsState[placement].tabs.filter(
+        (tab) => tab.kind === 'extension' && (!tab.resourceRef || !liveKeys.has(tab.resourceRef)),
+      );
+      if (stale.length > 0) props.onCloseTabs(placement, stale);
+    }
+  }, [extensionViews, props.onCloseTabs, props.panelsState]);
 
   return (
     <div className="maka-workbar-workspace-contents">
@@ -738,6 +772,8 @@ export function SessionWorkbar(props: {
             <WorkbarPanel active={visible && showingLauncher} placement={placement}>
               <WorkbarLauncher
                 onOpen={(kind) => props.onRequestOpenTab(placement, kind)}
+                onOpenExtension={(view) => props.onRequestOpenExtension?.(placement, view)}
+                extensionViews={extensionViews}
                 sideChatAvailable={props.sourceSession !== undefined}
               />
             </WorkbarPanel>
@@ -810,6 +846,15 @@ export function SessionWorkbar(props: {
               />
             </Suspense>
           );
+        } else if (tab.kind === 'extension') {
+          const view = extensionViews.find((candidate) => candidate.key === tab.resourceRef);
+          content = view
+            ? createElement(view.render, {
+                sessionId: props.sessionId,
+                active: !props.hidden && active,
+                placement,
+              })
+            : null;
         } else {
           const panelId = tab.id.slice('side-chat:'.length);
           const quote = props.quotes?.find((candidate) => candidate.id === panelId);

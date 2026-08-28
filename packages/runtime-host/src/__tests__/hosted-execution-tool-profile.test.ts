@@ -72,3 +72,12 @@ test('the headless coding profile freezes prompt, tools, memory, and foreground 
   );
   assert.equal((await schema.safeParseAsync({ command: 'true', pty: true })).success, false);
 });
+
+test('the tool-free profile freezes an empty tool ceiling and direct-output prompt', () => {
+  const profile = hostedExecutionRunProfile('tool-free-v1');
+  assert.ok(profile);
+  assert.deepEqual(profile.toolNames, []);
+  assert.equal(profile.memoryExtraction, false);
+  assert.match(profile.systemPrompt, /without calling tools/u);
+  assert.deepEqual(projectHostedExecutionTools([], 'tool-free-v1'), []);
+});

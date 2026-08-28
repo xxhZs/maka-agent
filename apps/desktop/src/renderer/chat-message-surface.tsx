@@ -8,6 +8,7 @@ import {
   Banner,
   Button,
   ChatView,
+  SlotOutlet,
   useUiLocale,
   type LiveContentActivationSnapshot,
   type LiveTurnProjection,
@@ -188,6 +189,14 @@ export function ChatMessageSurface({
   const emptyOverride: ReactNode =
     showOnboardingHero && onboardingState ? (
       <div className="maka-onboarding-surface" data-maka-contract="onboarding-surface">
+        <SlotOutlet
+          name="settings.onboarding"
+          owner={{
+            stepId: onboardingState.kind,
+            complete: () => { void onSkip(); },
+            openSection: (id) => onOpenSettings(id as SettingsSection),
+          }}
+        />
         <OnboardingHero
           state={onboardingState}
           onOpenSettings={onOpenSettings}

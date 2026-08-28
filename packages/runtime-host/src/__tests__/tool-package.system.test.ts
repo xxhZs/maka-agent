@@ -302,7 +302,9 @@ test('Host Agent Runtime is injected independently from Extension contributions'
               root: true,
             };
           }
-          if (method === 'list' || method === 'roots') return [{ id: 'owned-agent' }];
+          if (method === 'list' || method === 'catalog' || method === 'roots') {
+            return [{ id: 'owned-agent' }];
+          }
           if (method === 'stop') return { status: 'cancelled' };
           return { method };
         },
@@ -327,6 +329,7 @@ test('Host Agent Runtime is injected independently from Extension contributions'
         resume: 'owned-agent',
         get: 'owned-agent',
         list: [{ id: 'owned-agent' }],
+        catalog: [{ id: 'owned-agent' }],
         roots: [{ id: 'owned-agent' }],
         initiator: 'fault-session',
         requiredInitiator: 'fault-turn',
@@ -365,6 +368,7 @@ test('Host Agent Runtime is injected independently from Extension contributions'
           'agent.usage',
           'agent.transcript',
           'list',
+          'catalog',
           'roots',
         ],
       );
@@ -575,6 +579,7 @@ async function createAgentRuntimePackage(source: string): Promise<void> {
       resume: resumed.id,
       get: found?.id,
       list: await context.agents.list(),
+      catalog: await context.agents.catalog(),
       roots: await context.agents.roots(),
       initiator: context.agents.currentInitiator().sessionId,
       requiredInitiator: context.agents.requireInitiator().turnId,

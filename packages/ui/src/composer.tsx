@@ -40,6 +40,7 @@ import { stripQuoteHeadingMarkers } from './quote-ref-chip.js';
 import { WorkspacePicker, type WorkspacePickerModel } from './workspace-picker.js';
 import { useComposerDraft, type ComposerDraftPersistence } from './use-composer-draft.js';
 import { useComposerHistory } from './use-composer-history.js';
+import { SlotOutlet } from './ui-slots.js';
 import {
   composerWireText,
   createChatInputActionOwner,
@@ -1346,6 +1347,17 @@ export const Composer = forwardRef<
     || props.onSwarmModeChange
     || props.onGraphModeChange,
   );
+  const composerSlotOwner = {
+    active: !props.hidden,
+    locked: Boolean(props.disabled),
+  };
+  const inputSlotOwner = {
+    session: props.activeSession ?? null,
+    input: {
+      disabled: Boolean(props.disabled),
+      streaming: Boolean(props.streaming),
+    },
+  };
 
   return (
     <>
@@ -1380,6 +1392,8 @@ export const Composer = forwardRef<
           />
         </div>
       )}
+      <SlotOutlet name="conversation.input.overlay" owner={{}} />
+      <SlotOutlet name="conversation.input.dock" owner={inputSlotOwner} />
       <form
         ref={formRef}
         className="maka-composer composer"
@@ -1402,7 +1416,10 @@ export const Composer = forwardRef<
           // render our own into the `sendButton` slot.
           onSubmit={() => {}}
           isDisabled={props.disabled}
-          drawer={drawerTokenCount > 0 ? (
+          drawer={<SlotOutlet
+            name="conversation.input.attachments"
+            owner={composerSlotOwner}
+            options={{ fallback: drawerTokenCount > 0 ? (
             <ChatComposerDrawer
               className="maka-composer-drawer"
               count={drawerTokenCount}
@@ -1507,7 +1524,8 @@ export const Composer = forwardRef<
                 })}
               </div>
             </ChatComposerDrawer>
-          ) : undefined}
+          ) : null }}
+          />}
           input={(
             <div
               className="maka-composer-input"
@@ -1555,6 +1573,7 @@ export const Composer = forwardRef<
           )}
           footerActions={(
             <div className="maka-composer-left-controls">
+              <SlotOutlet name="conversation.input.left" owner={inputSlotOwner} />
               {/* Resting order: ＋ leftmost, then permission icon. */}
               {showPlusMenu ? (
                 <span className="maka-composer-plus-menu">
@@ -1674,7 +1693,10 @@ export const Composer = forwardRef<
                   mounted — `modelSwitcherDisabledReason` carries the lock and
                   its explanation, so the footer never reflows when a turn
                   starts or ends. */}
-              <div className="maka-model-selection-controls">
+              <SlotOutlet
+                name="conversation.input.model"
+                owner={composerSlotOwner}
+                options={{ fallback: <div className="maka-model-selection-controls">
                 {props.activeSession ? (
                   <ChatModelSwitcher
                     activeSession={props.activeSession}
@@ -1725,7 +1747,8 @@ export const Composer = forwardRef<
                     onChange={props.onNewChatThinkingLevelChange}
                   />
                 )}
-              </div>
+              </div> }}
+              />
               {/* The project decides where a NEW chat starts, which makes it a
                   parameter of this send like the model beside it — so it sits
                   at the end of that group rather than in a header row of its
@@ -1752,7 +1775,29 @@ export const Composer = forwardRef<
                   which unmounts this button, so focus is handed back to the
                   input exactly as removing a Skill token does; otherwise a
                   keyboard user is dropped on `document.body`. */}
-              {activeModes.map((mode) => (
+              <SlotOutlet
+                name="conversation.input.plan"
+                owner={composerSlotOwner}
+                options={{ fallback: activeModes.filter((mode) => mode.id === 'plan').map((mode) => (
+                  <IconButton
+                    key={mode.id}
+                    variant="ghost"
+                    type="button"
+                    size="sm"
+                    className="maka-composer-mode-button"
+                    data-mode={mode.id}
+                    label={mode.label}
+                    tooltip={mode.disabledReason ?? mode.onTitle}
+                    isDisabled={mode.isDisabled}
+                    onClick={() => {
+                      mode.onDeactivate();
+                      window.requestAnimationFrame(() => focusInput());
+                    }}
+                    icon={mode.icon}
+                  />
+                )) }}
+              />
+              {activeModes.filter((mode) => mode.id !== 'plan').map((mode) => (
                 <IconButton
                   key={mode.id}
                   variant="ghost"
@@ -1773,7 +1818,9 @@ export const Composer = forwardRef<
             </div>
           )}
           sendActions={(
-            <div className="maka-composer-right-controls" />
+            <div className="maka-composer-right-controls">
+              <SlotOutlet name="conversation.input.right" owner={inputSlotOwner} />
+            </div>
           )}
           sendButton={stopShown ? (
             <IconButton
@@ -1804,6 +1851,7 @@ export const Composer = forwardRef<
           )}
         />
       </form>
+      <SlotOutlet name="conversation.composer.dock" owner={inputSlotOwner} />
       {attachmentLightbox && (
         <Lightbox
           // Driven by the flag, never by unmounting: the component must

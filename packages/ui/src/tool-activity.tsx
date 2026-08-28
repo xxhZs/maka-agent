@@ -56,6 +56,7 @@ import {
 } from './tool-activity/tool-result-preview.js';
 import { getToolActivityCopy } from './tool-activity/copy.js';
 import { dotForStatus, type StatusSemantic } from './status-vocabulary.js';
+import { SlotOutlet } from './ui-slots.js';
 
 /** Friendly card for a `load_tools` result; falls back to JSON on unexpected shapes. */
 function LoadToolResultPreview(props: { args: unknown; value: unknown }) {
@@ -221,6 +222,32 @@ export function ToolTrow({
 }) {
   const locale = useUiLocale();
   if (items.length === 0) return null;
+  return (
+    <>
+      {items.map((item) => (
+        <SlotOutlet
+          key={item.toolUseId}
+          name="tool.call.toolview"
+          owner={{ callId: item.toolUseId, toolName: item.toolName, block: item }}
+          options={{
+            entryKey: item.toolName,
+            fallback: <ToolTrowDefault items={[item]} locale={locale} onOpenLinkedSession={onOpenLinkedSession} />,
+          }}
+        />
+      ))}
+    </>
+  );
+}
+
+function ToolTrowDefault({
+  items,
+  locale,
+  onOpenLinkedSession,
+}: {
+  items: ToolActivityItem[];
+  locale: UiLocale;
+  onOpenLinkedSession?(sessionId: string): void;
+}) {
   const segments = toolTrowSegments(items, locale);
 
   // ChatToolCalls owns expandable tool evidence. Linked child sessions are

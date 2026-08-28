@@ -44,6 +44,15 @@ test('Extension Agent Registry exposes every low-cost DSH-shaped capability', as
     hostEpoch: 'epoch-1',
     sessions: {
       handlers: {
+        'session.catalog.query': async () => ({
+          ok: true,
+          result: {
+            kind: 'page',
+            revision: 'sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa',
+            sessions: [{ id: 'durable-session', name: 'Durable Session' }],
+            nextCursor: null,
+          },
+        }),
         'session.create': async (input: Record<string, unknown>) => {
           createdSessions.push(input);
           headers.set(input.sessionId as string, header(input.sessionId as string));
@@ -233,6 +242,9 @@ test('Extension Agent Registry exposes every low-cost DSH-shaped capability', as
     'owned-agent',
   );
   assert.equal(((await registry.invoke('list', {}, invocation)) as unknown[]).length, 1);
+  assert.deepEqual(await registry.invoke('catalog', {}, invocation), [
+    { id: 'durable-session', name: 'Durable Session' },
+  ]);
   assert.equal(((await registry.invoke('roots', {}, invocation)) as unknown[]).length, 1);
 
   await registry.invoke(

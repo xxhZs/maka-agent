@@ -66,7 +66,6 @@ test('production composition exposes trusted Extension control and restores it a
         'inspect_package',
         'invoke_tool',
         'manage_package',
-        'publish_ui_state',
       ],
     );
 
@@ -96,7 +95,6 @@ test('production composition exposes trusted Extension control and restores it a
         'inspect_package',
         'invoke_tool',
         'manage_package',
-        'publish_ui_state',
       ],
     );
   } finally {

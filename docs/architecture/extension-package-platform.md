@@ -6,9 +6,10 @@ Services, and Host-owned Timers.
 
 ## Trust and identity
 
-Executable Extension code is trusted in-process code. Manifest permissions and
-schemas are guardrails, not a sandbox. UI documents separately run in
-opaque-origin iframes with a narrow Host bridge.
+Executable Extension code is trusted application code. Runtime handlers execute
+in the Runtime Host; a package's Client bundle executes in the Electron
+Renderer and registers React components in the host tree. Manifest schemas are
+guardrails, not a security sandbox.
 
 The manifest `id` identifies installed package bytes. A manifest `version` is
 display/package metadata, not a persistent lifecycle Revision. Installing bytes
@@ -35,7 +36,8 @@ secondary Revision/Binding controller or per-contribution activation map.
 - A Listener handles an Event; core Event listeners implement Hooks.
 - A Service exposes typed methods through Context dependency rules.
 - A Timer is a durable Host scheduler whose callback belongs to the Fiber.
-- A UI contribution is a sandboxed document projected into an allowed surface.
+- A Client contribution is a prebuilt module factory that registers typed React
+  components through the DSH-compatible Slot catalog.
 
 The runtime entry exports one handler object per activation. Tool, Listener,
 Service, and Timer handlers share module state and receive configuration,
@@ -47,6 +49,7 @@ Reload and reconfiguration stage fresh Fibers. Health checking and activation
 complete before the live switch. Failure closes the candidate and preserves the
 active Fiber; success switches and then retires the old Fiber.
 
-Restart reads package bytes and the Entry Tree and reconstructs all Fibers.
-Timer scheduling metadata and UI state have dedicated Host stores, but neither
-is a composition authority.
+Restart reads package bytes and the Entry Tree and reconstructs all Fibers. The
+`desktop-ui` projection supplies the active Client bundle generation to the
+Renderer; Slot registrations and effects are rebuilt from that projection and
+have no second activation authority.

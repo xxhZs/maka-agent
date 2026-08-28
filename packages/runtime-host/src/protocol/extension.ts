@@ -13,12 +13,6 @@ export const EXTENSION_COMPOSITION_MAX_EXTENSIONS = 256;
 export const EXTENSION_COMPOSITION_MAX_ENTRIES = 256;
 export const EXTENSION_COMPOSITION_RESULT_MAX_BYTES = 96 * 1024;
 export const EXTENSION_ERROR_MAX_BYTES = 4 * 1024;
-export const EXTENSION_UI_OFFICIAL_SLOTS = Object.freeze([
-  'sidebar.footer',
-  'conversation.header',
-  'settings.content',
-] as const);
-
 const QUERY_ERRORS = [
   'host_not_ready',
   'host_draining',
@@ -86,9 +80,6 @@ export interface ExtensionContractContribution {
   readonly id: string;
   readonly name?: string;
   readonly description?: string;
-  readonly surface?: 'app.root' | 'app.overlay' | 'app.slot';
-  readonly slot?: string;
-  readonly slots?: readonly string[];
   readonly event?: string;
   readonly mode?:
     | 'emit'
@@ -142,16 +133,11 @@ export interface ExtensionUiContributionProjection {
   readonly extensionId: string;
   readonly generation: number;
   readonly id: string;
-  readonly surface: 'app.root' | 'app.overlay' | 'app.slot';
-  readonly slot?: string;
-  readonly slots?: readonly string[];
-  readonly priority: number;
-  readonly document: string;
-  readonly documentSha256: string;
-  readonly network: boolean;
-  readonly hostState?: boolean;
-  readonly hostMethods?: readonly string[];
-  readonly sessionAccess?: boolean;
+  readonly bundle: string;
+  readonly bundleSha256: string;
+  readonly inject: readonly string[];
+  readonly external: readonly string[];
+  readonly tools: readonly string[];
 }
 
 export interface ExtensionUiSnapshotResult {
@@ -160,49 +146,19 @@ export interface ExtensionUiSnapshotResult {
   readonly contributions: readonly ExtensionUiContributionProjection[];
 }
 
-export type ExtensionUiStateValue =
-  | null
-  | boolean
-  | number
-  | string
-  | readonly ExtensionUiStateValue[]
-  | { readonly [key: string]: ExtensionUiStateValue };
-
-export interface ExtensionUiStateQueryInput {
-  readonly scopeId: string;
+export interface ExtensionClientToolInvokeInput {
   readonly entryId: string;
   readonly extensionId: string;
   readonly generation: number;
-  readonly key: string;
+  readonly id: string;
+  readonly sessionId: string;
+  readonly toolName: string;
+  readonly args: unknown;
 }
 
-export interface ExtensionUiStateQueryResult {
-  readonly found: boolean;
-  readonly value: ExtensionUiStateValue | null;
+export interface ExtensionClientToolInvokeResult {
+  readonly value: unknown;
 }
-
-export type ExtensionUiStateMutateInput = ExtensionUiStateQueryInput &
-  ({ readonly kind: 'set'; readonly value: ExtensionUiStateValue } | { readonly kind: 'delete' });
-
-export interface ExtensionUiStateMutateResult {
-  readonly changed: boolean;
-}
-
-export interface ExtensionUiRpcInvokeInput {
-  readonly scopeId: string;
-  readonly entryId: string;
-  readonly extensionId: string;
-  readonly generation: number;
-  readonly method: string;
-  readonly args: ExtensionUiStateValue;
-}
-
-export interface ExtensionUiRpcInvokeResult {
-  readonly value: ExtensionUiStateValue;
-}
-
-/** Reserved UI Host RPC method that adapts the sandbox bridge to the Host Agent Registry. */
-export const EXTENSION_UI_AGENT_RPC_METHOD = '$maka.agents';
 
 export type ExtensionCompositionMutateInput =
   | {
@@ -307,38 +263,16 @@ export const EXTENSION_OPERATION_SPECS = {
     decodeInput: decodeExtensionUiSnapshotInput,
     decodeOutput: decodeExtensionUiSnapshotResult,
   }),
-  'extension.ui.state.query': defineOperation<
-    ExtensionUiStateQueryInput,
-    ExtensionUiStateQueryResult,
-    (typeof MUTATION_ERRORS)[number]
-  >({
-    mode: 'query',
-    availability: 'ready',
-    errors: MUTATION_ERRORS,
-    decodeInput: decodeExtensionUiStateQueryInput,
-    decodeOutput: decodeExtensionUiStateQueryResult,
-  }),
-  'extension.ui.state.mutate': defineOperation<
-    ExtensionUiStateMutateInput,
-    ExtensionUiStateMutateResult,
+  'extension.client.tool.invoke': defineOperation<
+    ExtensionClientToolInvokeInput,
+    ExtensionClientToolInvokeResult,
     (typeof MUTATION_ERRORS)[number]
   >({
     mode: 'command',
     availability: 'ready',
     errors: MUTATION_ERRORS,
-    decodeInput: decodeExtensionUiStateMutateInput,
-    decodeOutput: decodeExtensionUiStateMutateResult,
-  }),
-  'extension.ui.rpc.invoke': defineOperation<
-    ExtensionUiRpcInvokeInput,
-    ExtensionUiRpcInvokeResult,
-    (typeof MUTATION_ERRORS)[number]
-  >({
-    mode: 'command',
-    availability: 'ready',
-    errors: MUTATION_ERRORS,
-    decodeInput: decodeExtensionUiRpcInvokeInput,
-    decodeOutput: decodeExtensionUiRpcInvokeResult,
+    decodeInput: decodeExtensionClientToolInvokeInput,
+    decodeOutput: decodeExtensionClientToolInvokeResult,
   }),
   'extension.package.install': defineHostPathOperation<
     ToolPackageInstallInput,
@@ -452,92 +386,36 @@ export function decodeExtensionUiSnapshotResult(value: unknown): ExtensionUiSnap
   return decoded;
 }
 
-export function decodeExtensionUiStateQueryInput(value: unknown): ExtensionUiStateQueryInput {
-  const input = requireExactRecord(value, 'extension UI state query input', [
-    'scopeId',
+export function decodeExtensionClientToolInvokeInput(
+  value: unknown,
+): ExtensionClientToolInvokeInput {
+  const input = requireExactRecord(value, 'Extension Client Tool invocation', [
     'entryId',
     'extensionId',
     'generation',
-    'key',
-  ]);
-  return decodeUiStateIdentity(input);
-}
-
-export function decodeExtensionUiStateQueryResult(value: unknown): ExtensionUiStateQueryResult {
-  const result = requireExactRecord(value, 'extension UI state query result', ['found', 'value']);
-  const decoded = {
-    found: decodeBoolean(result.found, 'extension UI state found'),
-    value: decodeUiStateValue(result.value),
-  };
-  requireEncodedByteLimit(decoded, 'extension UI state query result', 72 * 1024);
-  return decoded;
-}
-
-export function decodeExtensionUiStateMutateInput(value: unknown): ExtensionUiStateMutateInput {
-  const record = requireRecord(value, 'extension UI state mutation input');
-  if (record.kind === 'set') {
-    const input = requireExactRecord(record, 'extension UI state set input', [
-      'scopeId',
-      'entryId',
-      'extensionId',
-      'generation',
-      'key',
-      'kind',
-      'value',
-    ]);
-    const decoded = {
-      ...decodeUiStateIdentity(input),
-      kind: 'set' as const,
-      value: decodeUiStateValue(input.value),
-    };
-    requireEncodedByteLimit(decoded, 'extension UI state mutation input', 72 * 1024);
-    return decoded;
-  }
-  if (record.kind === 'delete') {
-    const input = requireExactRecord(record, 'extension UI state delete input', [
-      'scopeId',
-      'entryId',
-      'extensionId',
-      'generation',
-      'key',
-      'kind',
-    ]);
-    return { ...decodeUiStateIdentity(input), kind: 'delete' };
-  }
-  throw invalidProtocolFrame('Invalid extension UI state mutation kind');
-}
-
-export function decodeExtensionUiStateMutateResult(value: unknown): ExtensionUiStateMutateResult {
-  const result = requireExactRecord(value, 'extension UI state mutation result', ['changed']);
-  return { changed: decodeBoolean(result.changed, 'extension UI state changed') };
-}
-
-export function decodeExtensionUiRpcInvokeInput(value: unknown): ExtensionUiRpcInvokeInput {
-  const input = requireExactRecord(value, 'extension UI RPC invoke input', [
-    'scopeId',
-    'entryId',
-    'extensionId',
-    'generation',
-    'method',
+    'id',
+    'sessionId',
+    'toolName',
     'args',
   ]);
   const decoded = {
-    scopeId: decodeExtensionScopeId(input.scopeId, 'extension UI scopeId'),
     entryId: requireEntityId(input.entryId, 'extension entryId'),
     extensionId: decodeExtensionId(input.extensionId),
     generation: decodeGeneration(input.generation),
-    method: requireUtf8String(input.method, 'extension UI RPC method', 128),
-    args: decodeUiStateValue(input.args),
+    id: requireUtf8String(input.id, 'extension UI contribution id', 128),
+    sessionId: requireUtf8String(input.sessionId, 'session id', 256),
+    toolName: requireUtf8String(input.toolName, 'extension Tool name', 128),
+    args: cloneClientJson(input.args, 'Extension Client Tool arguments'),
   };
-  requireEncodedByteLimit(decoded, 'extension UI RPC invoke input', 512 * 1024);
+  requireEncodedByteLimit(decoded, 'Extension Client Tool invocation', 1024 * 1024);
   return decoded;
 }
 
-export function decodeExtensionUiRpcInvokeResult(value: unknown): ExtensionUiRpcInvokeResult {
-  const result = requireExactRecord(value, 'extension UI RPC invoke result', ['value']);
-  const decoded = { value: decodeUiStateValue(result.value) };
-  requireEncodedByteLimit(decoded, 'extension UI RPC invoke result', 1024 * 1024);
-  return decoded;
+export function decodeExtensionClientToolInvokeResult(
+  value: unknown,
+): ExtensionClientToolInvokeResult {
+  const result = requireExactRecord(value, 'Extension Client Tool result', ['value']);
+  return { value: cloneClientJson(result.value, 'Extension Client Tool result') };
 }
 
 export function decodeExtensionCompositionQueryResult(
@@ -882,19 +760,6 @@ function decodeContractContribution(value: unknown): ExtensionContractContributi
   ) {
     throw invalidProtocolFrame('Invalid Extension contract Hook fields');
   }
-  if (
-    contribution.surface !== undefined &&
-    contribution.surface !== 'app.root' &&
-    contribution.surface !== 'app.overlay' &&
-    contribution.surface !== 'app.slot'
-  )
-    throw invalidProtocolFrame('Invalid Extension contract UI surface');
-  if (
-    contribution.slots !== undefined &&
-    (!Array.isArray(contribution.slots) || contribution.slots.length > 32)
-  ) {
-    throw invalidProtocolFrame('Invalid Extension contract child slots');
-  }
   return {
     kind: contribution.kind,
     id: requireUtf8String(contribution.id, 'Extension contribution id', 128),
@@ -908,17 +773,6 @@ function decodeContractContribution(value: unknown): ExtensionContractContributi
             contribution.description,
             'Extension Tool description',
             4096,
-          ),
-        }),
-    ...(contribution.surface === undefined ? {} : { surface: contribution.surface }),
-    ...(contribution.slot === undefined
-      ? {}
-      : { slot: requireUtf8String(contribution.slot, 'Extension UI slot', 128) }),
-    ...(contribution.slots === undefined
-      ? {}
-      : {
-          slots: contribution.slots.map((slot) =>
-            requireUtf8String(slot, 'Extension UI child slot', 128),
           ),
         }),
     ...(contribution.event === undefined ? {} : { event: contribution.event as string }),
@@ -950,123 +804,62 @@ function decodeConfigurationValues(
 }
 
 function decodeUiContributionProjection(value: unknown): ExtensionUiContributionProjection {
-  const candidate = value as Record<string, unknown> | null;
-  const fields = [
+  const item = requireExactRecord(value, 'extension UI contribution', [
     'entryId',
     'extensionId',
     'generation',
     'id',
-    'surface',
-    'priority',
-    'document',
-    'documentSha256',
-    'network',
-    ...(candidate && Object.hasOwn(candidate, 'hostState') ? ['hostState'] : []),
-    ...(candidate && Object.hasOwn(candidate, 'hostMethods') ? ['hostMethods'] : []),
-    ...(candidate && Object.hasOwn(candidate, 'sessionAccess') ? ['sessionAccess'] : []),
-    ...(candidate && Object.hasOwn(candidate, 'slot') ? ['slot'] : []),
-    ...(candidate && Object.hasOwn(candidate, 'slots') ? ['slots'] : []),
-  ];
-  const item = requireExactRecord(value, 'extension UI contribution', fields);
-  if (
-    item.surface !== 'app.root' &&
-    item.surface !== 'app.overlay' &&
-    item.surface !== 'app.slot'
-  ) {
-    throw invalidProtocolFrame('Invalid extension UI surface');
-  }
-  if (
-    (item.surface === 'app.slot' &&
-      (typeof item.slot !== 'string' ||
-        !/^[a-z][a-z0-9]*(?:[.-][a-z0-9]+)*$/u.test(item.slot) ||
-        Buffer.byteLength(item.slot, 'utf8') > 128)) ||
-    (item.surface !== 'app.slot' && item.slot !== undefined)
-  ) {
-    throw invalidProtocolFrame('Invalid extension UI slot');
-  }
-  if (
-    item.slots !== undefined &&
-    (!Array.isArray(item.slots) ||
-      item.slots.length > 32 ||
-      item.slots.some(
-        (slot) =>
-          typeof slot !== 'string' ||
-          !/^[a-z][a-z0-9]*(?:[.-][a-z0-9]+)*$/u.test(slot) ||
-          Buffer.byteLength(slot, 'utf8') > 128,
-      ) ||
-      new Set(item.slots).size !== item.slots.length)
-  ) {
-    throw invalidProtocolFrame('Invalid extension UI child slots');
-  }
-  if (!Number.isSafeInteger(item.priority) || Math.abs(item.priority as number) > 10_000) {
-    throw invalidProtocolFrame('Invalid extension UI priority');
-  }
-  if (
-    item.hostMethods !== undefined &&
-    (!Array.isArray(item.hostMethods) || item.hostMethods.length > 64)
-  ) {
-    throw invalidProtocolFrame('Invalid extension UI Host methods');
-  }
+    'bundle',
+    'bundleSha256',
+    'inject',
+    'external',
+    'tools',
+  ]);
   return {
     entryId: requireEntityId(item.entryId, 'extension entryId'),
     extensionId: decodeExtensionId(item.extensionId),
     generation: decodeGeneration(item.generation),
     id: requireUtf8String(item.id, 'extension UI contribution id', 128),
-    surface: item.surface,
-    ...(item.slot === undefined ? {} : { slot: item.slot as string }),
-    ...(item.slots === undefined ? {} : { slots: item.slots as string[] }),
-    priority: item.priority as number,
-    document: requireUtf8String(item.document, 'extension UI document', 1024 * 1024),
-    documentSha256: requireUtf8String(item.documentSha256, 'extension UI document digest', 128),
-    network: decodeBoolean(item.network, 'extension UI network capability'),
-    ...(item.hostState === undefined
-      ? {}
-      : { hostState: decodeBoolean(item.hostState, 'extension UI Host state capability') }),
-    ...(item.hostMethods === undefined
-      ? {}
-      : {
-          hostMethods: (item.hostMethods as unknown[]).map((method) =>
-            requireUtf8String(method, 'extension UI Host method', 128),
-          ),
-        }),
-    ...(item.sessionAccess === undefined
-      ? {}
-      : {
-          sessionAccess: decodeBoolean(
-            item.sessionAccess,
-            'extension UI Session access capability',
-          ),
-        }),
+    bundle: requireUtf8String(item.bundle, 'extension UI client bundle', 1024 * 1024),
+    bundleSha256: requireUtf8String(item.bundleSha256, 'extension UI bundle digest', 128),
+    inject: decodeClientDependencyIds(item.inject, 'extension UI inject'),
+    external: decodeClientDependencyIds(item.external, 'extension UI external'),
+    tools: decodeClientToolNames(item.tools),
   };
 }
 
-function decodeUiStateIdentity(input: Record<string, unknown>): ExtensionUiStateQueryInput {
-  return {
-    scopeId: decodeExtensionScopeId(input.scopeId, 'extension UI scopeId'),
-    entryId: requireEntityId(input.entryId, 'extension entryId'),
-    extensionId: decodeExtensionId(input.extensionId),
-    generation: decodeGeneration(input.generation),
-    key: requireUtf8String(input.key, 'extension UI state key', 128),
-  };
-}
-
-function decodeUiStateValue(value: unknown, depth = 0): ExtensionUiStateValue {
-  if (depth > 16) throw invalidProtocolFrame('Extension UI state value is too deeply nested');
-  if (value === null || typeof value === 'boolean' || typeof value === 'string') return value;
-  if (typeof value === 'number' && Number.isFinite(value)) return value;
-  if (Array.isArray(value)) return value.map((item) => decodeUiStateValue(item, depth + 1));
-  if (value && typeof value === 'object') {
-    const record = value as Record<string, unknown>;
-    if (Object.keys(record).length > 256)
-      throw invalidProtocolFrame('Extension UI state object is too large');
-    return Object.fromEntries(
-      Object.entries(record).map(([key, item]) => [
-        requireUtf8String(key, 'extension UI state object key', 128),
-        decodeUiStateValue(item, depth + 1),
-      ]),
-    );
+function decodeClientToolNames(value: unknown): readonly string[] {
+  if (!Array.isArray(value) || value.length > 64) {
+    throw invalidProtocolFrame('Invalid extension UI Client Tool allowlist');
   }
-  throw invalidProtocolFrame('Invalid extension UI state value');
+  const names = value.map((item) => requireUtf8String(item, 'extension UI Client Tool', 128));
+  if (
+    names.some((name) => !/^[A-Za-z][A-Za-z0-9_-]{0,127}$/u.test(name)) ||
+    new Set(names.map((name) => name.toLowerCase())).size !== names.length
+  ) {
+    throw invalidProtocolFrame('Invalid extension UI Client Tool allowlist');
+  }
+  return names;
+}
+
+function cloneClientJson(value: unknown, label: string): unknown {
+  let encoded: string | undefined;
+  try {
+    encoded = JSON.stringify(value);
+  } catch {
+    throw invalidProtocolFrame(`${label} is not JSON`);
+  }
+  if (encoded === undefined || Buffer.byteLength(encoded, 'utf8') > 1024 * 1024) {
+    throw invalidProtocolFrame(`${label} is invalid or too large`);
+  }
+  return JSON.parse(encoded) as unknown;
+}
+
+function decodeClientDependencyIds(value: unknown, label: string): readonly string[] {
+  if (!Array.isArray(value) || value.length > 64) throw invalidProtocolFrame(`Invalid ${label}`);
+  const ids = value.map((item) => requireUtf8String(item, label, 128));
+  if (new Set(ids).size !== ids.length) throw invalidProtocolFrame(`Invalid ${label}`);
+  return ids;
 }
 
 function decodeEntryProjection(value: unknown): ExtensionCompositionEntryProjection {

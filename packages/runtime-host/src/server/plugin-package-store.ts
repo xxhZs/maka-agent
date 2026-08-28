@@ -173,7 +173,7 @@ export class PluginPackageStore {
     }
   }
 
-  async readDocument(
+  async readClientBundle(
     installed: Pick<InstalledPluginPackage, 'root'>,
     relativePath: string,
   ): Promise<string> {
@@ -239,12 +239,8 @@ async function decodePackage(root: string, files: readonly PackageFile[]): Promi
       throw invalid(`Plugin runtime entry does not exist: ${eventManifest.entry}`);
     }
     if (uiManifest) {
-      for (const item of uiManifest.ui) {
-        if (!paths.has(item.document))
-          throw invalid(`Plugin UI document does not exist: ${item.document}`);
-      }
-      if (uiManifest.host && !paths.has(uiManifest.host.entry)) {
-        throw invalid(`Plugin UI Host entry does not exist: ${uiManifest.host.entry}`);
+      if (!paths.has(uiManifest.client.entry)) {
+        throw invalid(`Plugin UI client entry does not exist: ${uiManifest.client.entry}`);
       }
     }
     return Object.freeze({

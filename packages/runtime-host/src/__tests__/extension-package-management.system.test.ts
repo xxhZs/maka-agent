@@ -56,7 +56,6 @@ test('define_package installs Tool, UI, Event, dependencies, and secret configur
         'invoke_tool',
         'emit_event',
         'call_service',
-        'publish_ui_state',
       ],
     );
     await call(management.tools(), 'define_package', {
@@ -151,16 +150,11 @@ test('define_package installs Tool, UI, Event, dependencies, and secret configur
         permissions: { workspace: 'read', network: false },
       },
       ui: {
-        contributions: [
-          {
-            id: 'studio-panel',
-            surface: 'app.slot',
-            slot: 'settings.content',
-            priority: 10,
-            document: '<!doctype html><title>Codebase Studio</title>',
-          },
-        ],
-        permissions: { network: false, hostState: true, sessionAccess: false },
+        source:
+          'window.__MakaModuleLoader__.load({id:"dev.maka.codebase-studio",factory:()=>({default:()=>undefined})});',
+        inject: [],
+        external: [],
+        tools: ['codebase_scan'],
       },
     })) as {
       extensionId: string;
@@ -172,7 +166,7 @@ test('define_package installs Tool, UI, Event, dependencies, and secret configur
 
     assert.equal(result.extensionId, 'dev.maka.codebase-studio');
     assert.deepEqual(result.toolNames, ['codebase_scan']);
-    assert.deepEqual(result.uiContributionIds, ['studio-panel']);
+    assert.deepEqual(result.uiContributionIds, ['dev.maka.codebase-studio']);
     assert.deepEqual(result.eventContributionIds, [
       'event:dev.maka.codebase-studio.scan.completed',
       'listener:dev.maka.codebase-studio.scan.completed:observe-scan',
@@ -218,7 +212,7 @@ test('define_package installs Tool, UI, Event, dependencies, and secret configur
       contract.contributions.map(({ kind, id }) => ({ kind, id })),
       [
         { kind: 'tool', id: 'codebase_scan' },
-        { kind: 'ui', id: 'studio-panel' },
+        { kind: 'ui', id: 'dev.maka.codebase-studio' },
         { kind: 'event', id: 'dev.maka.codebase-studio.scan.completed' },
         { kind: 'listener', id: 'observe-scan' },
         { kind: 'listener', id: 'safe-write' },
@@ -244,9 +238,11 @@ test('define_package installs Tool, UI, Event, dependencies, and secret configur
         .inspectEvents('session-package-test')
         .some(({ extensionId }) => extensionId === result.extensionId),
     );
-    assert.ok(
-      runtime.inspectUi('desktop-ui').some(({ extensionId }) => extensionId === result.extensionId),
-    );
+    const ui = runtime
+      .inspectUi('desktop-ui')
+      .find(({ extensionId }) => extensionId === result.extensionId);
+    assert.ok(ui);
+    assert.deepEqual(ui.tools, ['codebase_scan']);
     assert.deepEqual(
       await call(management.tools(), 'invoke_tool', { toolName: 'codebase_scan', args: {} }),
       { issues: 1 },
@@ -265,46 +261,6 @@ test('define_package installs Tool, UI, Event, dependencies, and secret configur
     })) as { listenerCount: number; delivered: number };
     assert.equal(emitted.listenerCount, 1);
     assert.equal(emitted.delivered, 1);
-    assert.deepEqual(
-      await call(management.tools(), 'publish_ui_state', {
-        extensionId: result.extensionId,
-        key: 'manual.result',
-        value: { accepted: true },
-      }),
-      {
-        extensionId: result.extensionId,
-        key: 'manual.result',
-        published: true,
-      },
-    );
-    const desktopEntry = activated.entries.find(({ scopeId }) => scopeId === 'desktop-ui');
-    assert.ok(desktopEntry);
-    assert.deepEqual(
-      await controller.handlers['extension.ui.state.query'](
-        {
-          scopeId: 'desktop-ui',
-          entryId: desktopEntry.entryId,
-          extensionId: result.extensionId,
-          generation: desktopEntry.generation,
-          key: 'scan.result',
-        },
-        connection,
-      ),
-      { ok: true, result: { found: true, value: { issues: 1 } } },
-    );
-    assert.deepEqual(
-      await controller.handlers['extension.ui.state.query'](
-        {
-          scopeId: 'desktop-ui',
-          entryId: desktopEntry.entryId,
-          extensionId: result.extensionId,
-          generation: desktopEntry.generation,
-          key: 'manual.result',
-        },
-        connection,
-      ),
-      { ok: true, result: { found: true, value: { accepted: true } } },
-    );
     await call(management.tools(), 'manage_package', {
       action: 'stop',
       extensionId: result.extensionId,
@@ -375,6 +331,51 @@ test('define_package rejects secret defaults before writing an Extension', async
       /secret configuration must not declare a default value/u,
     );
     assert.deepEqual(await toolStore.list(), []);
+  } finally {
+    await runtime.close().catch(() => undefined);
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
+test('define_package rejects a Client Tool not declared by its Runtime', async () => {
+  const root = await mkdtemp(join(tmpdir(), 'maka-define-package-client-tool-'));
+  const runtime = new HostExtensionRuntime();
+  const store = new PluginPackageStore(root);
+  const controller = new HostExtensionController(
+    runtime,
+    new InstalledPluginPackageLoader(new StaticTrustedToolExtensionLoader(), store),
+    new HostPluginCompositionStore(root),
+    () => undefined,
+  );
+  try {
+    const define = requireTool(
+      new HostExtensionPackageManagementTools(root, controller).tools(),
+      'define_package',
+    );
+    assert.throws(
+      () =>
+        (define.parameters as z.ZodType).parse({
+          id: 'dev.maka.invalid-client-tool',
+          runtime: {
+            source: 'export default { run: async () => ({ ok: true }) };',
+            tools: [
+              {
+                name: 'runtime_tool',
+                description: 'Runtime Tool',
+                handler: 'run',
+                inputSchema: { type: 'object' },
+              },
+            ],
+            permissions: { workspace: 'none', network: false },
+          },
+          ui: {
+            source:
+              'window.__MakaModuleLoader__.load({id:"dev.maka.invalid-client-tool",factory:()=>({default:()=>undefined})});',
+            tools: ['other_tool'],
+          },
+        }),
+      /UI client Tool must be declared by the same Runtime: other_tool/u,
+    );
   } finally {
     await runtime.close().catch(() => undefined);
     await rm(root, { recursive: true, force: true });

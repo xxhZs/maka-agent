@@ -7,11 +7,10 @@ import type { IpcHandler } from '../ipc-reconnect-policy.js';
 import type { DesktopRuntimeHostClient } from '../runtime-host-client.js';
 import { registerRuntimeHostUiExtensionsIpc } from '../runtime-host-ui-extensions-ipc-main.js';
 
-test('user import previews, confirms, installs, and enables one trusted UI and Event package', async () => {
+test('user import previews, confirms, installs, and enables one trusted Client and Event package', async () => {
   const root = await mkdtemp(join(tmpdir(), 'maka-ui-import-'));
   try {
-    await mkdir(join(root, 'documents'));
-    await mkdir(join(root, 'host'));
+    await mkdir(join(root, 'client'));
     await mkdir(join(root, 'dist'));
     await writeFile(
       join(root, 'maka.extension.json'),
@@ -36,16 +35,14 @@ test('user import previews, confirms, installs, and enables one trusted UI and E
           permissions: { workspace: 'none', network: false },
         },
         ui: {
-          contributions: [
-            { id: 'root', surface: 'app.root', priority: 1, document: 'documents/root.html' },
-          ],
-          host: { entry: 'host/service.mjs', methods: [{ name: 'hello', handler: 'hello' }] },
-          permissions: { network: false, hostState: true, sessionAccess: true },
+          client: { entry: 'client/index.js' },
         },
       }),
     );
-    await writeFile(join(root, 'documents', 'root.html'), '<main>hello</main>');
-    await writeFile(join(root, 'host', 'service.mjs'), 'export default { hello: () => "world" };');
+    await writeFile(
+      join(root, 'client', 'index.js'),
+      'window.__MakaModuleLoader__.load({id:"dev.maka.user.ui",factory:()=>({default:()=>undefined})});',
+    );
     await writeFile(
       join(root, 'dist', 'index.mjs'),
       'export default { changed: () => undefined };',

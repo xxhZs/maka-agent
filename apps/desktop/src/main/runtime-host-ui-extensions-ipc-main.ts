@@ -38,14 +38,11 @@ export function registerRuntimeHostUiExtensionsIpc(input: {
           title: `Import ${manifest.id}`,
           message: `Install Extension “${manifest.id}”?`,
           detail: [
-            `${manifest.uiCount} UI contribution${manifest.uiCount === 1 ? '' : 's'}`,
+            `${manifest.uiCount} Renderer Client bundle${manifest.uiCount === 1 ? '' : 's'}`,
             `${manifest.toolCount} Tool contribution${manifest.toolCount === 1 ? '' : 's'}`,
             `${manifest.eventCount} Event/Listener contribution${manifest.eventCount === 1 ? '' : 's'}`,
             `${manifest.serviceCount} Service contribution${manifest.serviceCount === 1 ? '' : 's'}`,
             `${manifest.timerCount} Timer contribution${manifest.timerCount === 1 ? '' : 's'}`,
-            `Host state: ${manifest.permissions.hostState ? 'allowed' : 'not allowed'}`,
-            `Session control: ${manifest.permissions.sessionAccess ? 'allowed' : 'not allowed'}`,
-            `Host methods: ${manifest.hostMethods.length === 0 ? 'none' : manifest.hostMethods.join(', ')}`,
             `Network: ${manifest.permissions.network ? 'allowed' : 'blocked'}`,
             `Workspace: ${manifest.permissions.workspace}`,
             '',
@@ -160,7 +157,7 @@ async function listUiExtensions(client: DesktopRuntimeHostClient) {
     });
 }
 
-async function previewPackage(sourcePath: string): Promise<{ id: string; uiCount: number; toolCount: number; eventCount: number; serviceCount: number; timerCount: number; hostMethods: string[]; permissions: { network: boolean; hostState: boolean; sessionAccess: boolean; workspace: string } }> {
+async function previewPackage(sourcePath: string): Promise<{ id: string; uiCount: number; toolCount: number; eventCount: number; serviceCount: number; timerCount: number; permissions: { network: boolean; workspace: string } }> {
   if (!(await stat(sourcePath)).isDirectory()) return previewBundle(sourcePath);
   const encoded = await readFile(join(sourcePath, 'maka.extension.json'), 'utf8');
   return previewManifest(JSON.parse(encoded) as Record<string, unknown>);
@@ -193,14 +190,15 @@ function previewManifest(value: Record<string, unknown>): Awaited<ReturnType<typ
   }
   const runtime = value.runtime as Record<string, unknown> | undefined;
   const uiValue = value.ui as Record<string, unknown> | undefined;
-  const ui = Array.isArray(uiValue?.contributions) ? uiValue.contributions : [];
+  const client = uiValue?.client as Record<string, unknown> | undefined;
+  const uiCount = typeof client?.entry === 'string' ? 1 : 0;
   const tools = Array.isArray(runtime?.tools) ? runtime.tools : [];
   const eventDefinitions = Array.isArray(runtime?.events) ? runtime.events : [];
   const listeners = Array.isArray(runtime?.listeners) ? runtime.listeners : [];
   const services = Array.isArray(runtime?.services) ? runtime.services : [];
   const timers = Array.isArray(runtime?.timers) ? runtime.timers : [];
   if (
-    ui.length === 0 &&
+    uiCount === 0 &&
     tools.length === 0 &&
     eventDefinitions.length === 0 &&
     listeners.length === 0 &&
@@ -209,26 +207,16 @@ function previewManifest(value: Record<string, unknown>): Awaited<ReturnType<typ
   ) {
     throw new Error('Extension package has no contributions');
   }
-  const permissions = uiValue?.permissions as Record<string, unknown> | undefined;
   const runtimePermissions = runtime?.permissions as Record<string, unknown> | undefined;
-  const host = uiValue?.host as Record<string, unknown> | undefined;
-  const methods = Array.isArray(host?.methods) ? host.methods : [];
-  const hostMethods = methods.map((item) => (item as Record<string, unknown>)?.name);
-  if (hostMethods.some((name) => typeof name !== 'string')) {
-    throw new Error('Extension Bundle Host methods are invalid');
-  }
   return {
     id: value.id,
-    uiCount: ui.length,
+    uiCount,
     toolCount: tools.length,
     eventCount: eventDefinitions.length + listeners.length,
     serviceCount: services.length,
     timerCount: timers.length,
-    hostMethods: hostMethods as string[],
     permissions: {
-      network: permissions?.network === true || runtimePermissions?.network === true,
-      hostState: permissions?.hostState === true,
-      sessionAccess: permissions?.sessionAccess === true,
+      network: runtimePermissions?.network === true,
       workspace:
         typeof runtimePermissions?.workspace === 'string' ? runtimePermissions.workspace : 'none',
     },

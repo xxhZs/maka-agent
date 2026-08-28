@@ -29,6 +29,7 @@ import { Item } from '@astryxdesign/core/Item';
 import { MakaWordmark } from './maka-wordmark.js';
 import { useUiLocale } from './locale-context.js';
 import { getConversationCopy, type DayPeriod } from './conversation-copy.js';
+import { SlotOutlet } from './ui-slots.js';
 export type { DayPeriod } from './conversation-copy.js';
 
 /**
@@ -91,13 +92,20 @@ export function EmptyChatHero(props: {
           104px it shipped with, the two were within 8% of each other and
           neither led. */}
       <div className="maka-hero-visual">
-        <MakaWordmark width={160} />
+        <SlotOutlet
+          name="conversation.hero.brand.mark"
+          owner={{ size: 160 }}
+          options={{ fallback: <MakaWordmark width={160} /> }}
+        />
       </div>
       <header>
         <h1>
           {label ? copy.headlineWithLabel(greeting, label) : copy.headlineFallback(greeting, greetingTail)}
         </h1>
       </header>
+      <SlotOutlet name="conversation.hero.workspace.directoryFlow" owner={{}} />
+      <SlotOutlet name="conversation.hero.workspace" owner={{}} />
+      <SlotOutlet name="conversation.hero.agentPreset" owner={{}} />
     </section>
   );
 }

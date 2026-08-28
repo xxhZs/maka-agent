@@ -52,6 +52,7 @@ export const PACKAGE_AGENT_RUNTIME_METHODS = [
   'resume',
   'get',
   'list',
+  'catalog',
   'roots',
   'run',
   'stop',
@@ -158,6 +159,8 @@ type PackageHandler = (
         resume(input: unknown): Promise<PackageAgentHandle>;
         get(id: string): Promise<PackageAgentHandle | undefined>;
         list(): Promise<unknown>;
+        /** Durable Maka Session catalog, including Sessions not yet registered by this package. */
+        catalog(): Promise<unknown>;
         roots(): Promise<unknown>;
         currentInitiator(): Readonly<PackageInvocationContext>;
         requireInitiator(): Readonly<PackageInvocationContext>;
@@ -362,6 +365,7 @@ export class InProcessPackageActivation {
           : handle(value as PackageAgentDescriptor);
       },
       list: () => callAgentRuntime('list', {}),
+      catalog: () => callAgentRuntime('catalog', {}),
       roots: () => callAgentRuntime('roots', {}),
       currentInitiator: () =>
         Object.freeze({ ...(initiatorRuntime(this.agents)?.currentInitiator() ?? agentContext) }),

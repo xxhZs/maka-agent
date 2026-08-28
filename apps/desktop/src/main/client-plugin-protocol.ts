@@ -1,33 +1,29 @@
 import type { ExtensionUiSnapshotResult } from '@maka/runtime-host/protocol';
-import {
-  uiExtensionFramePolicy,
-  withUiSandboxPolicy,
-} from './ui-extension-frame-document.js';
 
-const TOKEN_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/u;
 const EXPECTED_QUERY_KEYS = Object.freeze([
-  'contributionId',
+  'bundleSha256',
   'entryId',
   'extensionId',
   'generation',
+  'id',
   'scopeId',
-  'token',
 ]);
 
-export interface UiExtensionFrameClient {
+export interface ClientPluginProtocolClient {
   request(
     operation: 'extension.ui.snapshot',
     input: { readonly scopeId: string },
   ): Promise<ExtensionUiSnapshotResult>;
 }
 
-export function createUiExtensionFrameRequestHandler(
-  resolveClient: () => UiExtensionFrameClient | null,
+/** Serve only an exact, currently active Client bundle from the Host composition. */
+export function createClientPluginRequestHandler(
+  resolveClient: () => ClientPluginProtocolClient | null,
 ): (request: Request) => Promise<Response> {
   return async (request) => {
     if (request.method !== 'GET') return response('Method not allowed', 405);
-    const identity = decodeFrameIdentity(request.url);
-    if (!identity) return response('Invalid UI Extension frame request', 400);
+    const identity = decodeClientPluginIdentity(request.url);
+    if (!identity) return response('Invalid Client plugin request', 400);
     const client = resolveClient();
     if (!client) return response('Runtime Host unavailable', 503);
     try {
@@ -39,22 +35,17 @@ export function createUiExtensionFrameRequestHandler(
           item.entryId === identity.entryId &&
           item.extensionId === identity.extensionId &&
           item.generation === identity.generation &&
-          item.id === identity.contributionId,
+          item.id === identity.id &&
+          item.bundleSha256 === identity.bundleSha256,
       );
-      if (!contribution) return response('UI Extension contribution not active', 404);
-      const document = withUiSandboxPolicy(
-        contribution.document,
-        contribution.network,
-        identity.token,
-        contribution.slots ?? [],
-      );
-      return new Response(document, {
+      if (!contribution) return response('Client plugin bundle is stale or inactive', 404);
+      return new Response(contribution.bundle, {
         status: 200,
         headers: {
           'cache-control': 'no-store',
-          'content-security-policy': uiExtensionFramePolicy(contribution.network),
-          'content-type': 'text/html; charset=utf-8',
-          'cross-origin-resource-policy': 'cross-origin',
+          'content-security-policy': "default-src 'none'",
+          'content-type': 'text/javascript; charset=utf-8',
+          'cross-origin-resource-policy': 'same-origin',
         },
       });
     } catch {
@@ -63,40 +54,38 @@ export function createUiExtensionFrameRequestHandler(
   };
 }
 
-function decodeFrameIdentity(urlValue: string): {
+function decodeClientPluginIdentity(urlValue: string): {
   readonly scopeId: 'desktop-ui';
   readonly entryId: string;
   readonly extensionId: string;
   readonly generation: number;
-  readonly contributionId: string;
-  readonly token: string;
+  readonly id: string;
+  readonly bundleSha256: string;
 } | null {
   const url = new URL(urlValue);
-  if (url.protocol !== 'maka-ui:' || url.hostname !== 'frame' || url.pathname !== '/v1') {
-    return null;
-  }
-  if ([...url.searchParams.keys()].sort().join('\0') !== EXPECTED_QUERY_KEYS.join('\0')) {
-    return null;
-  }
+  if (
+    url.protocol !== 'maka-client-plugin:' ||
+    url.hostname !== 'bundle' ||
+    url.pathname !== '/v1' ||
+    [...url.searchParams.keys()].sort().join('\0') !== EXPECTED_QUERY_KEYS.join('\0')
+  ) return null;
   const scopeId = url.searchParams.get('scopeId');
   const entryId = url.searchParams.get('entryId');
   const extensionId = url.searchParams.get('extensionId');
   const generation = Number(url.searchParams.get('generation'));
-  const contributionId = url.searchParams.get('contributionId');
-  const token = url.searchParams.get('token');
+  const id = url.searchParams.get('id');
+  const bundleSha256 = url.searchParams.get('bundleSha256');
   if (
     scopeId !== 'desktop-ui' ||
     !entryId ||
     !extensionId ||
     !Number.isSafeInteger(generation) ||
     generation <= 0 ||
-    !contributionId ||
-    !token ||
-    !TOKEN_PATTERN.test(token)
-  ) {
-    return null;
-  }
-  return { scopeId, entryId, extensionId, generation, contributionId, token };
+    !id ||
+    !bundleSha256 ||
+    !/^[a-f0-9]{64}$/u.test(bundleSha256)
+  ) return null;
+  return { scopeId, entryId, extensionId, generation, id, bundleSha256 };
 }
 
 function response(body: string, status: number): Response {

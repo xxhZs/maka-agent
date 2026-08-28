@@ -79,7 +79,7 @@ function request(
       return client.request(operation, HOST_OPERATION_SPECS[operation].decodeInput(value));
     case 'extension.ui.snapshot':
       return client.request(operation, HOST_OPERATION_SPECS[operation].decodeInput(value));
-    case 'extension.ui.state.query':
+    case 'extension.client.tool.invoke':
       return client.request(operation, HOST_OPERATION_SPECS[operation].decodeInput(value));
     case 'extension.configuration.query':
       return client.request(operation, HOST_OPERATION_SPECS[operation].decodeInput(value));
@@ -88,10 +88,6 @@ function request(
     case 'scheduled-task.query':
       return client.request(operation, HOST_OPERATION_SPECS[operation].decodeInput(value));
     case 'web-search.execute':
-      return client.request(operation, HOST_OPERATION_SPECS[operation].decodeInput(value));
-    case 'extension.ui.state.mutate':
-      return client.request(operation, HOST_OPERATION_SPECS[operation].decodeInput(value));
-    case 'extension.ui.rpc.invoke':
       return client.request(operation, HOST_OPERATION_SPECS[operation].decodeInput(value));
   }
 }

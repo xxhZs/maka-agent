@@ -23,7 +23,7 @@ import {
   reorderSessionWorkbarPanelTab,
   titleSessionWorkbarPanelTab,
   type SessionWorkbarTab,
-  type SessionWorkbarTabKind,
+  type BuiltinSessionWorkbarTabKind,
   type SessionWorkbarPlacement,
 } from './session-workbar-tabs';
 
@@ -109,7 +109,7 @@ export function useShellLayout() {
   );
   const openWorkbarTab = useCallback(
     (
-      kind: Exclude<SessionWorkbarTabKind, 'side-chat'>,
+      kind: BuiltinSessionWorkbarTabKind,
       placement: SessionWorkbarPlacement = 'right',
       options: { preview?: boolean } = {},
     ) =>

@@ -6,7 +6,7 @@ import type {
 } from '@maka/runtime/plugin-runtime';
 import type { MakaTool, MakaToolContext } from '@maka/runtime/tool-runtime';
 import type { Disposable } from '@maka/runtime/plugin-kernel';
-import { createHash } from 'node:crypto';
+import { createHash, randomUUID } from 'node:crypto';
 import {
   type ExtensionCompositionEntryProjection,
   type ExtensionCompositionMutateInput,
@@ -22,13 +22,8 @@ import {
   type ExtensionPackageContractProjection,
   type ExtensionUiSnapshotInput,
   type ExtensionUiSnapshotResult,
-  EXTENSION_UI_AGENT_RPC_METHOD,
-  type ExtensionUiRpcInvokeInput,
-  type ExtensionUiRpcInvokeResult,
-  type ExtensionUiStateMutateInput,
-  type ExtensionUiStateMutateResult,
-  type ExtensionUiStateQueryInput,
-  type ExtensionUiStateQueryResult,
+  type ExtensionClientToolInvokeInput,
+  type ExtensionClientToolInvokeResult,
   type OperationOutcome,
   type ToolPackageInstallInput,
   type ToolPackageInstallResult,
@@ -46,9 +41,6 @@ import {
   type PersistedPluginComposition,
   type PersistedPluginEntry,
 } from './plugin-composition-store.js';
-import { HostExtensionUiStateStore } from './extension-ui-state-store.js';
-import { UiPackageService } from './ui-package-service.js';
-import type { PluginPackageStore } from './plugin-package-store.js';
 import { validateExtensionConfiguration } from './extension-package-manifest.js';
 import type { PackageAgentRuntime } from './in-process-package-runtime.js';
 
@@ -77,9 +69,7 @@ export class HostExtensionController {
     'extension.configuration.query': (input) => this.#configurationQuery(input),
     'extension.configuration.mutate': (input) => this.#configurationMutate(input),
     'extension.ui.snapshot': (input) => this.#uiSnapshot(input),
-    'extension.ui.state.query': (input) => this.#uiStateQuery(input),
-    'extension.ui.state.mutate': (input) => this.#uiStateMutate(input),
-    'extension.ui.rpc.invoke': (input) => this.#uiRpcInvoke(input),
+    'extension.client.tool.invoke': (input) => this.#invokeClientTool(input),
     'extension.package.install': (input) => this.#installPackage(input),
     'extension.package.uninstall': (input) => this.#uninstallPackage(input),
     'extension.package.export': (input) => this.#exportPackage(input),
@@ -91,7 +81,6 @@ export class HostExtensionController {
       this.#persistedComposition = composition;
     },
   );
-  readonly #uiPackageService: UiPackageService;
   #mutationTail: Promise<void> = Promise.resolve();
   #recovered = false;
   #draining = false;
@@ -104,22 +93,14 @@ export class HostExtensionController {
     private readonly loader: HostTrustedToolExtensionLoader,
     private readonly store: HostPluginCompositionStore,
     private readonly requestDrain: () => void,
-    private readonly uiState = new HostExtensionUiStateStore(),
-    private readonly uiPackages?: PluginPackageStore,
+    private readonly sessionCwdForScope?: (sessionId: string) => string | Promise<string>,
   ) {
-    this.#uiPackageService = new UiPackageService(
-      (scopeId) => this.runtime.context(scopeId).get<PackageAgentRuntime>('agents'),
-      (scopeId) => this.runtime.context(scopeId),
-    );
     this.loader.setConfigurationResolver?.((entryId) => this.#configurationForEntry(entryId));
     this.loader.setEventEmitter?.((scopeId, event, payload, context) =>
       this.runtime.emitEvent(scopeId, event, payload, context),
     );
     this.loader.setServiceCaller?.((scopeId, service, method, input, context) =>
       this.runtime.callService(scopeId, service, method, input, context),
-    );
-    this.loader.setUiStatePublisher?.((extensionId, key, value) =>
-      this.#publishToolVisualization(extensionId, key, value),
     );
   }
 
@@ -146,35 +127,6 @@ export class HostExtensionController {
       ...invocationContext(context),
       callerExtensionId: 'maka.host',
     });
-  }
-
-  async publishUiState(extensionId: string, key: string, value: unknown): Promise<void> {
-    const matches = this.runtime
-      .inspectUi('desktop-ui')
-      .filter((item) => item.extensionId === extensionId);
-    if (matches.length === 0) {
-      throw new Error(`Active Desktop UI Extension was not found: ${extensionId}`);
-    }
-    if (!matches.some((item) => item.hostState)) {
-      throw new Error(`Active Desktop UI Extension does not allow Host state: ${extensionId}`);
-    }
-    await this.#publishToolVisualization(extensionId, key, value);
-  }
-
-  async #publishToolVisualization(extensionId: string, key: string, value: unknown): Promise<void> {
-    const admitted = this.runtime
-      .inspectUi('desktop-ui')
-      .filter((item) => item.extensionId === extensionId && item.hostState);
-    await Promise.all(
-      admitted.map((item) =>
-        this.uiState.set(
-          'desktop-ui',
-          item.entryId,
-          key,
-          value as Parameters<HostExtensionUiStateStore['set']>[3],
-        ),
-      ),
-    );
   }
 
   /** Recovery is fail-open for the Host and fail-closed for Extension mutations. */
@@ -343,16 +295,11 @@ export class HostExtensionController {
           extensionId: item.extensionId,
           generation: item.generation,
           id: item.id,
-          surface: item.surface,
-          ...(item.slot ? { slot: item.slot } : {}),
-          slots: item.slots,
-          priority: item.priority,
-          document: item.document,
-          documentSha256: item.documentSha256,
-          network: item.network,
-          hostState: item.hostState,
-          hostMethods: item.hostMethods,
-          sessionAccess: item.sessionAccess,
+          bundle: item.bundle,
+          bundleSha256: item.bundleSha256,
+          inject: item.inject,
+          external: item.external,
+          tools: item.tools,
         }),
       );
     const digest = createHash('sha256').update(JSON.stringify(contributions)).digest('hex');
@@ -364,170 +311,54 @@ export class HostExtensionController {
     return { ok: true, result };
   }
 
-  async #uiStateQuery(
-    input: ExtensionUiStateQueryInput,
-  ): Promise<OperationOutcome<'extension.ui.state.query'>> {
-    const denied = this.#authorizeUiState(input);
-    if (denied) return uiStateFailure(denied.code, denied.message);
-    try {
-      const result: ExtensionUiStateQueryResult = await this.uiState.get(
-        input.scopeId,
-        input.entryId,
-        input.key,
+  async #invokeClientTool(
+    input: ExtensionClientToolInvokeInput,
+  ): Promise<OperationOutcome<'extension.client.tool.invoke'>> {
+    const client = this.runtime
+      .inspectUi('desktop-ui')
+      .find(
+        (item) =>
+          item.entryId === input.entryId &&
+          item.extensionId === input.extensionId &&
+          item.generation === input.generation &&
+          item.id === input.id,
       );
-      return { ok: true, result };
-    } catch (error) {
-      return uiStateFailure('persistence_failed', boundedErrorMessage(error));
+    if (!client) {
+      return clientToolFailure('not_found', 'Client contribution is not active');
     }
-  }
-
-  #uiStateMutate(
-    input: ExtensionUiStateMutateInput,
-  ): Promise<OperationOutcome<'extension.ui.state.mutate'>> {
-    if (this.#draining)
-      return Promise.resolve(uiStateMutationFailure('host_draining', 'Runtime Host is draining'));
-    return this.#serializeMutation(async () => {
-      const denied = this.#authorizeUiState(input);
-      if (denied) return uiStateMutationFailure(denied.code, denied.message);
-      try {
-        const changed =
-          input.kind === 'set'
-            ? await this.uiState
-                .set(input.scopeId, input.entryId, input.key, input.value)
-                .then(() => true)
-            : await this.uiState.delete(input.scopeId, input.entryId, input.key);
-        const result: ExtensionUiStateMutateResult = { changed };
-        return { ok: true, result };
-      } catch (error) {
-        return uiStateMutationFailure('persistence_failed', boundedErrorMessage(error));
+    if (!client.tools.includes(input.toolName)) {
+      return clientToolFailure('invalid_request', 'Client Tool is not declared by this UI');
+    }
+    const contribution = this.runtime
+      .inspectTools(input.sessionId)
+      .find((item) => item.extensionId === input.extensionId && item.toolName === input.toolName);
+    if (!contribution) {
+      return clientToolFailure('not_found', 'Client Tool is not active in this session');
+    }
+    const tool = this.resolveTool(input.sessionId, input.toolName);
+    if (!tool) return clientToolFailure('not_found', 'Client Tool is unavailable');
+    try {
+      if (!this.sessionCwdForScope) {
+        return clientToolFailure('not_found', 'Client Tool session authority is unavailable');
       }
-    });
-  }
-
-  async #uiRpcInvoke(
-    input: ExtensionUiRpcInvokeInput,
-  ): Promise<OperationOutcome<'extension.ui.rpc.invoke'>> {
-    if (this.#draining) return uiRpcFailure('host_draining', 'Runtime Host is draining');
-    if (!this.uiPackages)
-      return uiRpcFailure('operation_unavailable', 'UI Host services are unavailable');
-    const agentRequest = input.method === EXTENSION_UI_AGENT_RPC_METHOD;
-    const denied = agentRequest ? this.#authorizeUiAgent(input) : this.#authorizeUiRpc(input);
-    if (denied) return uiRpcFailure(denied.code, denied.message);
-    try {
-      const installed = await this.uiPackages.loadUi(input.extensionId);
-      const result: ExtensionUiRpcInvokeResult = {
-        value: (await (agentRequest
-          ? this.#uiPackageService.invokeAgent(installed, input.args, new AbortController().signal)
-          : this.#uiPackageService.invoke(
-              installed,
-              input.method,
-              input.args,
-              new AbortController().signal,
-            ))) as ExtensionUiRpcInvokeResult['value'],
+      const cwd = await this.sessionCwdForScope(input.sessionId);
+      await validateClientToolArgs(tool, input.args);
+      const abort = new AbortController();
+      const value = await tool.impl(input.args, {
+        sessionId: input.sessionId,
+        turnId: `client:${input.extensionId}`,
+        cwd,
+        toolCallId: `client:${randomUUID()}`,
+        abortSignal: abort.signal,
+        emitOutput: () => undefined,
+      });
+      const result: ExtensionClientToolInvokeResult = {
+        value: value === undefined ? null : JSON.parse(JSON.stringify(value)),
       };
       return { ok: true, result };
     } catch (error) {
-      return uiRpcFailure('internal_failure', boundedErrorMessage(error));
+      return clientToolFailure('invalid_request', boundedErrorMessage(error));
     }
-  }
-
-  #authorizeUiState(
-    input: ExtensionUiStateQueryInput,
-  ): { code: 'not_found' | 'invalid_request'; message: string } | undefined {
-    const entry = this.#readEntryState(input.entryId);
-    if (!entry) return { code: 'not_found', message: 'UI Extension entry is not installed' };
-    const current = this.runtime.inspect(input.entryId).current;
-    if (
-      !entry.enabled ||
-      entry.scopeId !== input.scopeId ||
-      entry.extensionId !== input.extensionId ||
-      current?.generation !== input.generation
-    ) {
-      return {
-        code: 'invalid_request',
-        message: 'UI Extension bridge identity is stale or inactive',
-      };
-    }
-    const admitted = this.runtime
-      .inspectUi(input.scopeId)
-      .some(
-        (item) =>
-          item.entryId === input.entryId &&
-          item.extensionId === input.extensionId &&
-          item.generation === input.generation &&
-          item.hostState,
-      );
-    return admitted
-      ? undefined
-      : { code: 'invalid_request', message: 'UI Extension did not declare Host state permission' };
-  }
-
-  #authorizeUiRpc(
-    input: ExtensionUiRpcInvokeInput,
-  ): { code: 'not_found' | 'invalid_request'; message: string } | undefined {
-    const entry = this.#readEntryState(input.entryId);
-    if (!entry) return { code: 'not_found', message: 'UI Extension entry is not installed' };
-    const current = this.runtime.inspect(input.entryId).current;
-    if (
-      !entry.enabled ||
-      entry.scopeId !== input.scopeId ||
-      entry.extensionId !== input.extensionId ||
-      current?.generation !== input.generation
-    ) {
-      return {
-        code: 'invalid_request',
-        message: 'UI Extension bridge identity is stale or inactive',
-      };
-    }
-    const admitted = this.runtime
-      .inspectUi(input.scopeId)
-      .some(
-        (item) =>
-          item.entryId === input.entryId &&
-          item.extensionId === input.extensionId &&
-          item.generation === input.generation &&
-          item.hostMethods.includes(input.method),
-      );
-    return admitted
-      ? undefined
-      : {
-          code: 'invalid_request',
-          message: 'UI Host method is not declared by the active Fiber',
-        };
-  }
-
-  #authorizeUiAgent(
-    input: ExtensionUiRpcInvokeInput,
-  ): { code: 'not_found' | 'invalid_request'; message: string } | undefined {
-    const entry = this.#readEntryState(input.entryId);
-    if (!entry) return { code: 'not_found', message: 'UI Extension entry is not installed' };
-    const current = this.runtime.inspect(input.entryId).current;
-    if (
-      !entry.enabled ||
-      entry.scopeId !== input.scopeId ||
-      entry.extensionId !== input.extensionId ||
-      current?.generation !== input.generation
-    ) {
-      return {
-        code: 'invalid_request',
-        message: 'UI Extension bridge identity is stale or inactive',
-      };
-    }
-    const admitted = this.runtime
-      .inspectUi(input.scopeId)
-      .some(
-        (item) =>
-          item.entryId === input.entryId &&
-          item.extensionId === input.extensionId &&
-          item.generation === input.generation &&
-          item.sessionAccess,
-      );
-    return admitted
-      ? undefined
-      : {
-          code: 'invalid_request',
-          message: 'UI Extension did not declare Session access permission',
-        };
   }
 
   #installPackage(
@@ -786,7 +617,6 @@ export class HostExtensionController {
           operations: [{ type: 'remove', entryId: entryId }],
         });
       }
-      await this.uiState.clear(entry.scopeId, entry.entryId);
       await this.#pruneOrphanDependencyEntries();
       const persisted = await this.#commitDesiredState();
       return persisted ?? mutationSuccess(null);
@@ -1281,30 +1111,24 @@ function uiSnapshotFailure(
   return { ok: false, error: { code, message } };
 }
 
-function uiStateFailure(
-  code: 'not_found' | 'invalid_request' | 'persistence_failed',
+function clientToolFailure(
+  code: 'not_found' | 'invalid_request',
   message: string,
-): OperationOutcome<'extension.ui.state.query'> {
+): OperationOutcome<'extension.client.tool.invoke'> {
   return { ok: false, error: { code, message } };
 }
 
-function uiStateMutationFailure(
-  code: 'host_draining' | 'not_found' | 'invalid_request' | 'persistence_failed',
-  message: string,
-): OperationOutcome<'extension.ui.state.mutate'> {
-  return { ok: false, error: { code, message } };
-}
-
-function uiRpcFailure(
-  code:
-    | 'host_draining'
-    | 'operation_unavailable'
-    | 'not_found'
-    | 'invalid_request'
-    | 'internal_failure',
-  message: string,
-): OperationOutcome<'extension.ui.rpc.invoke'> {
-  return { ok: false, error: { code, message } };
+async function validateClientToolArgs(tool: MakaTool, args: unknown): Promise<void> {
+  const schema = tool.parameters as {
+    safeParseAsync?: (value: unknown) => Promise<{ success: boolean; error?: unknown }>;
+    safeParse?: (value: unknown) => { success: boolean; error?: unknown };
+  };
+  const result = schema.safeParseAsync
+    ? await schema.safeParseAsync(args)
+    : schema.safeParse?.(args);
+  if (result && !result.success) {
+    throw new Error(`Tool arguments failed validation: ${String(result.error)}`);
+  }
 }
 
 function mutationFailure(

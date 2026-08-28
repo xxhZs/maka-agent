@@ -19,6 +19,12 @@ const HEADLESS_CODING_V1_SYSTEM_PROMPT = [
   'Stop when the task is complete.',
 ].join('\n');
 
+const TOOL_FREE_V1_SYSTEM_PROMPT = [
+  'Complete the request directly without calling tools.',
+  'Follow the requested output format exactly.',
+  'Return only the requested output with no extra narration.',
+].join('\n');
+
 const HEADLESS_CODING_V1_BASH_DESCRIPTION =
   'Run a foreground shell command in the session cwd. Use Bash for inspection, builds, tests, and task-local generation. Background execution and PTY sessions are unavailable in this profile.';
 
@@ -46,6 +52,13 @@ export function hostedExecutionRunProfile(
       memoryExtraction: false,
     };
   }
+  if (profile === 'tool-free-v1') {
+    return {
+      toolNames: [],
+      systemPrompt: TOOL_FREE_V1_SYSTEM_PROMPT,
+      memoryExtraction: false,
+    };
+  }
   profile satisfies never;
   throw new Error('Unknown Session tool profile');
 }
@@ -59,7 +72,8 @@ export function projectHostedExecutionTools(
   profile: SessionToolProfile | undefined,
 ): readonly MakaTool[] {
   if (profile === undefined) return tools;
-  hostedExecutionRunProfile(profile);
+  const runProfile = hostedExecutionRunProfile(profile)!;
+  if (runProfile.toolNames.length === 0) return [];
   return tools.map((tool) =>
     tool.name === 'Bash'
       ? {

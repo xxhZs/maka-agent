@@ -41,6 +41,7 @@ import { AttachmentKindIcon } from './attachment-kinds.js';
 import { QuoteRefChip } from './quote-ref-chip.js';
 import { Marker, markerVariants } from './primitives/chat.js';
 import { ToolTrow } from './tool-activity.js';
+import { SlotOutlet } from './ui-slots.js';
 import { formatBytes } from './tool-activity/preview-utils.js';
 import { useUiLocale } from './locale-context.js';
 import { getConversationCopy } from './conversation-copy.js';
@@ -140,6 +141,7 @@ function LoadedAttachmentImage(props: { src: string; name: string }) {
  * affordance. Memoized so streaming re-renders do not rebuild settled asks.
  */
 const UserMessageBody = memo(function UserMessageBody(props: {
+  messageId: string;
   text: string;
   ts?: number;
   attachments?: readonly AttachmentRef[];
@@ -216,13 +218,17 @@ const UserMessageBody = memo(function UserMessageBody(props: {
       ) : null}
       {imageAttachments.length > 0 ? (
         <HStack gap={1} wrap="wrap" maxWidth="100%" className="maka-user-attachments">
-          {imageAttachments.map((attachment, index) => (
+          <SlotOutlet
+            name="conversation.message.images"
+            owner={{ messageId: props.messageId, images: imageAttachments }}
+            options={{ fallback: imageAttachments.map((attachment, index) => (
             <AttachmentImage
               key={`${attachment.name}-${index}`}
               attachment={attachment}
               onReadAttachmentBytes={props.onReadAttachmentBytes}
             />
-          ))}
+            )) }}
+          />
         </HStack>
       ) : null}
       <ChatMessageBubble
@@ -490,6 +496,7 @@ export const TurnView = memo(function TurnView(props: {
           className="maka-chat-message maka-user-message"
         >
           <UserMessageBody
+            messageId={turn.user.id}
             text={turn.user.text}
             ts={turn.user.ts}
             attachments={turn.user.attachments}
@@ -545,6 +552,7 @@ export const TurnView = memo(function TurnView(props: {
               className="maka-chat-message maka-user-message maka-steering-message"
             >
               <UserMessageBody
+                messageId={message.id}
                 text={message.text}
                 ts={message.ts}
                 attachments={message.attachments}
@@ -677,6 +685,17 @@ export const TurnView = memo(function TurnView(props: {
                   />
                 )
               ))}
+            {ownsTurnChrome ? (
+              <>
+                <SlotOutlet name="conversation.chat.turnTail" owner={{ node: turn }} />
+                {turn.assistant?.id ? (
+                  <SlotOutlet
+                    name="conversation.chat.assistant-actions"
+                    owner={{ messageId: turn.assistant.id }}
+                  />
+                ) : null}
+              </>
+            ) : null}
           </LocalizedChatMessage>
         );
       })}

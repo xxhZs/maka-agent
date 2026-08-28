@@ -12,20 +12,10 @@ test('one Cordis package owns Tool, UI, and Hook contributions together', async 
     toolNames: ['fixture_combined'],
     ui: [
       {
-        id: 'fixture-root',
-        surface: 'app.root',
-        slots: ['fixture.detail'],
-        priority: 10,
-        document: '<!doctype html><title>fixture</title>',
-        network: false,
-      },
-      {
-        id: 'fixture-detail',
-        surface: 'app.slot',
-        slot: 'fixture.detail',
-        priority: 10,
-        document: '<!doctype html><title>detail</title>',
-        network: false,
+        id: 'fixture.combined',
+        bundle: 'window.__MakaModuleLoader__.load({id:"fixture.combined",factory:()=>({})});',
+        inject: [],
+        external: [],
       },
     ],
     eventContributionIds: ['fixture.combined.changed', 'capture'],
@@ -73,7 +63,7 @@ test('one Cordis package owns Tool, UI, and Hook contributions together', async 
     ],
   });
   assert.equal(runtime.inspectTools('session-one').length, 1);
-  assert.equal(runtime.inspectUi('session-one').length, 2);
+  assert.equal(runtime.inspectUi('session-one').length, 1);
   assert.equal(runtime.inspectEvents('session-one').length, 1);
   assert.equal(runtime.inspectEventListeners('session-one').length, 1);
   await runtime.emitEvent(
@@ -93,7 +83,7 @@ test('one Cordis package owns Tool, UI, and Hook contributions together', async 
     operations: [{ type: 'update', entryId: 'combined-entry', patch: { disabled: false } }],
   });
   assert.equal(runtime.inspectTools('session-one').length, 1);
-  assert.equal(runtime.inspectUi('session-one').length, 2);
+  assert.equal(runtime.inspectUi('session-one').length, 1);
   assert.equal(runtime.inspectEventListeners('session-one').length, 1);
   await runtime.close();
 });

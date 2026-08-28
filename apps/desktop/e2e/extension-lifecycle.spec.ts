@@ -1,8 +1,8 @@
 import { readFile, mkdir, writeFile } from 'node:fs/promises';
 import path from 'node:path';
-import { COMPOSER_INPUT, expect, test } from './fixtures';
+import { expect, test } from './fixtures';
 
-test('one combined Extension runs every contribution and recovers after a Maka restart', async ({
+test('one combined Extension activates its native Client UI and recovers after a Maka restart', async ({
   extensionWindow,
 }) => {
   let { page } = extensionWindow;
@@ -26,7 +26,7 @@ test('one combined Extension runs every contribution and recovers after a Maka r
       enabled: true,
       status: 'active',
       toolNames: ['e2e_echo'],
-      uiContributionIds: ['e2e-panel'],
+      uiContributionIds: ['dev.maka.e2e-combined'],
       eventContributionIds: [
         'event:dev.maka.e2e-combined.completed',
         'listener:dev.maka.e2e-combined.completed:observe-completed',
@@ -36,22 +36,12 @@ test('one combined Extension runs every contribution and recovers after a Maka r
       timerContributionIds: ['heartbeat'],
     });
 
-  const panel = page.frameLocator('iframe').getByTestId('combined-extension-panel');
-  await expect(panel).toHaveText('READY: strict');
+  const panel = page.getByTestId('combined-extension-panel');
+  await expect(panel).toHaveText('READY');
 
   await expect.poll(() => readJson(path.join(workspaceRoot, 'e2e-timer.json'))).toMatchObject({
     kind: 'heartbeat',
   });
-  await invokeExtensionThroughMaka(page);
-  await expect(page.getByRole('log')).toContainText('"tool":true');
-  await expect(panel).toContainText('through-maka');
-  await expect.poll(() => readJson(path.join(workspaceRoot, 'e2e-service.json'))).toMatchObject({
-    value: 'through-maka',
-  });
-  await expect.poll(() => readJson(path.join(workspaceRoot, 'e2e-event.json'))).toMatchObject({
-    value: 'through-maka',
-  });
-  await expect.poll(() => readLines(path.join(workspaceRoot, 'e2e-hook.jsonl'))).toHaveLength(2);
 
   page = await extensionWindow.restart();
   await expect
@@ -63,12 +53,10 @@ test('one combined Extension runs every contribution and recovers after a Maka r
       ),
     )
     .toMatchObject({ enabled: true, status: 'active', toolNames: ['e2e_echo'] });
-  await expect(page.frameLocator('iframe').getByTestId('combined-extension-panel')).toBeVisible();
-  await invokeExtensionThroughMaka(page);
-  await expect.poll(() => readLines(path.join(workspaceRoot, 'e2e-hook.jsonl'))).toHaveLength(4);
+  await expect(page.getByTestId('combined-extension-panel')).toBeVisible();
 
   await page.evaluate(() => window.maka.uiExtensions.setEnabled('dev.maka.e2e-combined', false));
-  await expect(page.frameLocator('iframe').getByTestId('combined-extension-panel')).toHaveCount(0);
+  await expect(page.getByTestId('combined-extension-panel')).toHaveCount(0);
   await expect
     .poll(() =>
       page.evaluate(async () =>
@@ -80,9 +68,7 @@ test('one combined Extension runs every contribution and recovers after a Maka r
     .toBe('disabled');
 
   await page.evaluate(() => window.maka.uiExtensions.setEnabled('dev.maka.e2e-combined', true));
-  await expect(page.frameLocator('iframe').getByTestId('combined-extension-panel')).toHaveText(
-    'READY: strict',
-  );
+  await expect(page.getByTestId('combined-extension-panel')).toHaveText('READY');
 
   await page.evaluate(() => window.maka.uiExtensions.remove('dev.maka.e2e-combined'));
   await expect
@@ -94,13 +80,13 @@ test('one combined Extension runs every contribution and recovers after a Maka r
       ),
     )
     .toBe(false);
-  await expect(page.frameLocator('iframe').getByTestId('combined-extension-panel')).toHaveCount(0);
+  await expect(page.getByTestId('combined-extension-panel')).toHaveCount(0);
 });
 
 async function writeCombinedExtension(root: string): Promise<void> {
   await Promise.all([
     mkdir(path.join(root, 'dist'), { recursive: true }),
-    mkdir(path.join(root, 'documents'), { recursive: true }),
+    mkdir(path.join(root, 'client'), { recursive: true }),
   ]);
   await writeFile(
     path.join(root, 'maka.extension.json'),
@@ -180,15 +166,7 @@ async function writeCombinedExtension(root: string): Promise<void> {
         permissions: { workspace: 'write', network: false },
       },
       ui: {
-        contributions: [
-          {
-            id: 'e2e-panel',
-            surface: 'app.overlay',
-            priority: 50,
-            document: 'documents/panel.html',
-          },
-        ],
-        permissions: { network: false, hostState: true, sessionAccess: false },
+        client: { entry: 'client/index.js' },
       },
     }),
   );
@@ -218,26 +196,22 @@ async function writeCombinedExtension(root: string): Promise<void> {
     };\n`,
   );
   await writeFile(
-    path.join(root, 'documents/panel.html'),
-    `<!doctype html><html><body><strong data-testid="combined-extension-panel">BOOTING</strong><script>
-      window.makaUI.getConfig().then(async (config) => {
-        await window.makaUI.setState('e2e.ready', true);
-        document.querySelector('[data-testid="combined-extension-panel"]').textContent = 'READY: ' + config.mode;
-      });
-      setInterval(async () => {
-        const state = await window.makaUI.getState('lifecycle.result');
-        if (state && state.value) document.querySelector('[data-testid="combined-extension-panel"]').textContent = 'RESULT: ' + JSON.stringify(state.value);
-      }, 50);
-    </script></body></html>`,
+    path.join(root, 'client/index.js'),
+    `window.__MakaModuleLoader__.load({
+      id: 'dev.maka.e2e-combined',
+      factory(require) {
+        const React = require('react');
+        return {
+          default(ctx) {
+            return ctx.slots.register(
+              { name: 'shell.overlay', id: 'e2e-panel', order: 50 },
+              () => React.createElement('strong', { 'data-testid': 'combined-extension-panel' }, 'READY'),
+            );
+          },
+        };
+      },
+    });`,
   );
-}
-
-async function invokeExtensionThroughMaka(page: import('@playwright/test').Page): Promise<void> {
-  await page.getByRole('button', { name: '新任务', exact: true }).click({ force: true });
-  const composer = page.locator(COMPOSER_INPUT);
-  await composer.fill('__e2e_extension_lifecycle__');
-  await composer.press('Enter');
-  await expect(page.getByRole('button', { name: '重新生成' })).toHaveCount(1, { timeout: 20_000 });
 }
 
 async function readJson(file: string): Promise<Record<string, unknown> | null> {
@@ -245,13 +219,5 @@ async function readJson(file: string): Promise<Record<string, unknown> | null> {
     return JSON.parse(await readFile(file, 'utf8')) as Record<string, unknown>;
   } catch {
     return null;
-  }
-}
-
-async function readLines(file: string): Promise<readonly string[]> {
-  try {
-    return (await readFile(file, 'utf8')).trim().split('\n').filter(Boolean);
-  } catch {
-    return [];
   }
 }

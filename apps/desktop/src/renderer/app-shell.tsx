@@ -5,6 +5,7 @@ import {
   useMemo,
   useRef,
   useState,
+  useSyncExternalStore,
   type CSSProperties,
   type Dispatch,
   type ReactNode,
@@ -48,6 +49,14 @@ import {
   getConversationCopy,
   getSharedUiCopy,
   reconcileInteractions,
+  createMakaUiSlotCore,
+  ClientWorkbarRegistry,
+  type ClientWorkbarPlacement,
+  type ClientWorkbarView,
+  SlotOutlet,
+  SlotProvider,
+  SlotRoot,
+  type SlotCore,
 } from '@maka/ui';
 import { GitBranch, MessageCircleQuestion, Minimize2, Network } from '@maka/ui/icons';
 import { useKeyboardHelp } from './keyboard-help';
@@ -95,7 +104,7 @@ import {
 } from './plan-mode-panel';
 import { McpPage } from './mcp-page';
 import { UiExtensionsPage } from './ui-extensions-page';
-import { UiExtensionSlot } from './ui-extension-host';
+import { useClientPlugins } from './use-client-plugins';
 import { getOnboardingActivationCandidate, useOnboardingSnapshot } from './use-onboarding-snapshot';
 import type { AppUpdateStatus, OnboardingSnapshot } from '../preload/bridge-contract.js';
 import { DESKTOP_TRANSCRIPT_RANGE_MAX_BYTES } from '../preload/transcript-contract.js';
@@ -242,6 +251,9 @@ export function AppShell({
   const [uiLocaleOverride, setUiLocaleOverride] = useState<UiLocale | null>(null);
   const systemUiLocale = useSystemUiLocale();
   const uiLocale = resolveUiLocale(uiLocalePreference, systemUiLocale, uiLocaleOverride);
+  const [uiSlotCore] = useState(createMakaUiSlotCore);
+  const [clientWorkbarRegistry] = useState(() => new ClientWorkbarRegistry());
+  useClientPlugins(uiSlotCore, clientWorkbarRegistry);
   const errorToastAction = useMemo<ToastErrorAction>(
     () => ({
       label: getShellCopy(uiLocale).errorBoundary.copyReport,
@@ -276,6 +288,8 @@ export function AppShell({
               uiLocaleOverride={uiLocaleOverride}
               setUiLocaleOverride={setUiLocaleOverride}
               setUiLocalePreference={setUiLocalePreference}
+              uiSlotCore={uiSlotCore}
+              clientWorkbarRegistry={clientWorkbarRegistry}
             />
           </ErrorBoundary>
         </ToastProvider>
@@ -314,14 +328,30 @@ function AppShellContent({
   uiLocaleOverride,
   setUiLocaleOverride,
   setUiLocalePreference,
+  uiSlotCore,
+  clientWorkbarRegistry,
 }: {
   initialOnboardingSnapshot?: OnboardingSnapshot | null;
   uiLocale: UiLocale;
   uiLocaleOverride: UiLocale | null;
   setUiLocaleOverride: Dispatch<SetStateAction<UiLocale | null>>;
   setUiLocalePreference: Dispatch<SetStateAction<UiLocalePreference>>;
+  uiSlotCore: SlotCore;
+  clientWorkbarRegistry: ClientWorkbarRegistry;
 }) {
   const toastApi = useToast();
+  const clientWorkbarViews = useSyncExternalStore(
+    clientWorkbarRegistry.subscribe,
+    clientWorkbarRegistry.snapshot,
+    clientWorkbarRegistry.snapshot,
+  );
+  const [activeClientMainView, setActiveClientMainView] = useState<{
+    key: string;
+    sessionId: string;
+  } | null>(null);
+  const clientMainView = activeClientMainView
+    ? clientWorkbarViews.find((view) => view.key === activeClientMainView.key) ?? null
+    : null;
   const [appUpdateStatus, setAppUpdateStatus] = useState<AppUpdateStatus | null>(null);
   const updateInstallInFlightRef = useRef(false);
   const notifiedInstallErrorRef = useRef<string | null>(null);
@@ -363,6 +393,14 @@ function AppShellContent({
     setPendingSessionModelBySession,
     clearTurnTransientState,
   } = useAppShellSessionWorkspace(toastApi);
+  useEffect(() => {
+    if (
+      activeClientMainView &&
+      (!clientMainView || activeClientMainView.sessionId !== activeId)
+    ) {
+      setActiveClientMainView(null);
+    }
+  }, [activeClientMainView, activeId, clientMainView]);
   const interactionHydrationEpochRef = useRef(new Map<string, number>());
   const markInteractionChanged = useCallback((sessionId: string) => {
     const epochs = interactionHydrationEpochRef.current;
@@ -1379,6 +1417,38 @@ function AppShellContent({
     pinWorkbarTab,
     openWorkbarLauncher,
   } = useShellLayout();
+  const openClientWorkbarView = useCallback(
+    (placement: ClientWorkbarPlacement, view: ClientWorkbarView) => {
+      if (!activeIdRef.current) return;
+      if (placement === 'main') {
+        setActiveClientMainView({ key: view.key, sessionId: activeIdRef.current });
+        setWorkbarCollapsed(true);
+        setBottomPanelOpen(false);
+        return;
+      }
+      openDynamicWorkbarTab(
+        {
+          id: `extension:${view.key}`,
+          kind: 'extension',
+          title: view.title,
+          resourceRef: view.key,
+          ownerSessionId: activeIdRef.current,
+        },
+        placement,
+      );
+      if (placement === 'right') setWorkbarCollapsed(false);
+      else setBottomPanelOpen(true);
+    },
+    [activeIdRef, openDynamicWorkbarTab, setBottomPanelOpen, setWorkbarCollapsed],
+  );
+  useEffect(
+    () => clientWorkbarRegistry.onOpen((request) => {
+      if (request.sessionId !== activeIdRef.current) return;
+      const view = clientWorkbarViews.find((candidate) => candidate.key === request.key);
+      if (view) openClientWorkbarView(request.placement, view);
+    }),
+    [activeIdRef, clientWorkbarRegistry, clientWorkbarViews, openClientWorkbarView],
+  );
   const openNewSideConversation = useCallback(
     (placement: SessionWorkbarPlacement, initialPrompt?: string) => {
       const sourceSessionId = activeIdRef.current;
@@ -1502,7 +1572,10 @@ function AppShellContent({
   );
 
   const requestOpenWorkbarTab = useCallback(
-    (placement: SessionWorkbarPlacement, kind: SessionWorkbarTabKind) => {
+    (
+      placement: SessionWorkbarPlacement,
+      kind: Exclude<SessionWorkbarTabKind, 'extension'>,
+    ) => {
       if (kind === 'terminal') {
         if (!activeId) return;
         const ownerSessionId = activeId;
@@ -2643,6 +2716,8 @@ function AppShellContent({
         : 'im_hub';
 
   return (
+    <SlotProvider core={uiSlotCore} sessionId={activeId}>
+      <SlotRoot owner={{ children: (
     <div
       className="appFrame agents-layout-root"
       data-agents-page
@@ -2755,7 +2830,10 @@ function AppShellContent({
         aria-hidden={shellObscured ? 'true' : undefined}
         inert={shellObscured ? true : undefined}
         sideNav={
-          <SessionListPanel
+          <SlotOutlet
+            name="sidebar"
+            owner={{ collapsed: sessionListCollapsed, width: sessionListWidth }}
+            options={{ fallback: <SessionListPanel
             collapseHandleRef={sessionSideNavHandleRef}
             collapsed={sessionListCollapsed}
             onCollapsedChange={setSessionListCollapsed}
@@ -2785,7 +2863,7 @@ function AppShellContent({
             onImport={() => setExternalImportOpen(true)}
             rowActions={sessionRowActions}
             projectActions={projectRowActions}
-            footerExtension={<UiExtensionSlot name="sidebar.footer" />}
+          /> }}
           />
         }
       >
@@ -2872,11 +2950,24 @@ function AppShellContent({
                   onSaveMarkdown={(input) => saveDailyReviewMarkdown(input, { shouldShowFeedback: isDailyReviewSurfaceActive })}
                 />
               ) : null}
-              <ChatSurfaceLayout
+              {clientMainView && activeClientMainView?.sessionId === activeId ? (
+                <div className="maka-client-main-view" data-testid="client-main-view">
+                  {clientMainView.render({
+                    sessionId: activeClientMainView?.sessionId ?? '',
+                    active: true,
+                    placement: 'main',
+                    close: () => setActiveClientMainView(null),
+                  })}
+                </div>
+              ) : null}
+              <SlotOutlet
+                name="conversation"
+                owner={{}}
+                options={{ fallback: <ChatSurfaceLayout
                 // Reset conversation-owned scroll state without remounting the
                 // composer: its contenteditable DOM carries the live draft.
                 conversationKey={activeId}
-                hidden={navSelection.section !== 'sessions'}
+                hidden={navSelection.section !== 'sessions' || Boolean(clientMainView)}
                 composer={
                   <>
                     {navSelection.section === 'sessions' &&
@@ -2891,7 +2982,19 @@ function AppShellContent({
                       />
                     ) : null}
                     {navSelection.section === 'sessions' ? <PlanExecutionPanel planMode={planMode} /> : null}
-                    <ChatComposerRegion
+                    <SlotOutlet
+                      name="conversation.composer"
+                      owner={{
+                        active: navSelection.section === 'sessions',
+                        locked: onboardingComposerHidden || !activeBoundarySurface.localInteractionAvailable,
+                      }}
+                      options={{ overlay: true, fallback: <SlotOutlet
+                        name="conversation.composer.bar"
+                        owner={{
+                          active: navSelection.section === 'sessions',
+                          locked: onboardingComposerHidden || !activeBoundarySurface.localInteractionAvailable,
+                        }}
+                        options={{ fallback: <ChatComposerRegion
                   workspacePicker={workspacePicker}
                   composerRef={composerRef}
                   active={navSelection.section === 'sessions'}
@@ -3059,13 +3162,37 @@ function AppShellContent({
                   onGraphModeChange={(active) => {
                     void setGraphMode(active);
                   }}
+                    /> }}
+                    /> }}
                     />
                   </>
                 }
               >
                 {navSelection.section === 'sessions' ? (
-                  <ChatMessageSurface
-                headerExtension={<UiExtensionSlot name="conversation.header" />}
+                  <SlotOutlet
+                    name="conversation.session"
+                    owner={{}}
+                    options={{ fallback: <SlotOutlet
+                      name="conversation.view"
+                      owner={{}}
+                      options={{ fallback: <ChatMessageSurface
+                headerExtension={
+                  <SlotOutlet
+                    name="conversation.session.header"
+                    owner={{}}
+                    options={{ fallback: <>
+                      <SlotOutlet
+                        name="conversation.session.header.lineage"
+                        owner={{
+                          lineageSessionId: activeId ?? '',
+                          displayTitle: activeSessionForView?.name ?? '',
+                        }}
+                      />
+                      <SlotOutlet name="conversation.session.header.actions" owner={{}} />
+                      <SlotOutlet name="conversation.session.header.utilities" owner={{}} />
+                    </> }}
+                  />
+                }
                 sessionUiController={sessionUiController}
                 activeSessionId={activeId}
                 hasOlderHistory={activeTranscriptRange?.hasOlder === true}
@@ -3213,16 +3340,19 @@ function AppShellContent({
                   }
                 }}
                 conversationItems={planConversationItems}
+                  /> }}
+                  /> }}
                   />
                 ) : null}
-              </ChatSurfaceLayout>
+              </ChatSurfaceLayout> }}
+              />
             </div>
             {/* Rendered collapsed too: ChatWorkbar's own box is what the
                 collapse animates, and it has to be in the tree on both sides of
                 the toggle for there to be an animation at all. The column
                 inside it still unmounts. */}
             {navSelection.section === 'sessions' && activeId && (
-              <ChatWorkbar
+              <SlotOutlet name="details" owner={{}} options={{ fallback: <ChatWorkbar
                 activeId={activeId}
                 rightCollapsed={workbarCollapsed}
                 bottomOpen={bottomPanelOpen}
@@ -3247,6 +3377,8 @@ function AppShellContent({
                   else setBottomPanelOpen(true);
                 }}
                 onRequestOpenTab={requestOpenWorkbarTab}
+                extensionViews={clientWorkbarViews}
+                onRequestOpenExtension={openClientWorkbarView}
                 rightResizable={workbarResizable}
                 bottomResizable={bottomPanelResizable}
                 quotes={quotePanels.filter(
@@ -3283,7 +3415,7 @@ function AppShellContent({
                 modelChoices={chatModelChoices}
                 mentionSkills={mentionSkills}
                 onSearchMentionFiles={searchMentionFiles}
-              />
+              /> }} />
             )}
           </div>
           </MakaUriContext.Provider>
@@ -3326,7 +3458,7 @@ function AppShellContent({
 
       <RuntimeHostSshTerminalDialog />
 
-      <AppShellOverlays
+      <SlotOutlet name="shell.overlay" owner={{}} options={{ fallback: <AppShellOverlays
         settingsOpen={settingsOpen}
         connections={connections}
         defaultConnection={defaultConnection}
@@ -3368,7 +3500,9 @@ function AppShellContent({
           upsertSessionSummary(session);
           openSessionInChat(session.id);
         }}
-      />
+      /> }} />
     </div>
+      ) }} />
+    </SlotProvider>
   );
 }

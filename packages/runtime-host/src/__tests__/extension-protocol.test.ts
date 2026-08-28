@@ -5,8 +5,8 @@ import {
   decodeExtensionCompositionQueryResult,
   decodeExtensionContractQueryResult,
   decodeExtensionConfigurationMutateInput,
+  decodeExtensionClientToolInvokeInput,
   decodeExtensionPackageExportInput,
-  decodeExtensionUiRpcInvokeInput,
   decodeExtensionUiSnapshotResult,
   decodeToolPackageInstallInput,
   decodeToolPackageUninstallInput,
@@ -43,7 +43,7 @@ test('Extension control protocol strictly decodes catalog and lifecycle mutation
             required: ['apiKey'],
           },
           contributions: [
-            { kind: 'ui', id: 'root', surface: 'app.root', slots: ['weather.details'] },
+            { kind: 'ui', id: 'dev.maka.weather' },
             { kind: 'hook', id: 'policy', event: 'PreToolUse', mode: 'gate' },
             {
               kind: 'event',
@@ -59,8 +59,8 @@ test('Extension control protocol strictly decodes catalog and lifecycle mutation
           ],
         },
       ],
-    }).packages[0]?.contributions[0]?.slots,
-    ['weather.details'],
+    }).packages[0]?.contributions[0]?.id,
+    'dev.maka.weather',
   );
   assert.equal(
     decodeExtensionContractQueryResult({
@@ -116,24 +116,6 @@ test('Extension control protocol strictly decodes catalog and lifecycle mutation
     },
   );
   assert.deepEqual(
-    decodeExtensionUiRpcInvokeInput({
-      scopeId: 'desktop-ui',
-      entryId: 'ui-entry',
-      extensionId: 'dev.maka.appearance',
-      generation: 2,
-      method: 'lookup',
-      args: { query: 'Maka' },
-    }),
-    {
-      scopeId: 'desktop-ui',
-      entryId: 'ui-entry',
-      extensionId: 'dev.maka.appearance',
-      generation: 2,
-      method: 'lookup',
-      args: { query: 'Maka' },
-    },
-  );
-  assert.deepEqual(
     decodeExtensionUiSnapshotResult({
       scopeId: 'desktop-ui',
       digest: 'sha256-demo',
@@ -142,24 +124,23 @@ test('Extension control protocol strictly decodes catalog and lifecycle mutation
           entryId: 'ui-entry',
           extensionId: 'dev.maka.appearance',
           generation: 2,
-          id: 'root',
-          surface: 'app.root',
-          priority: 100,
-          document: '<main>Maka</main>',
-          documentSha256: 'demo',
-          network: false,
-          sessionAccess: true,
+          id: 'dev.maka.appearance',
+          bundle: 'appearance bundle',
+          bundleSha256: 'demo',
+          inject: [],
+          external: ['dev.maka.theme'],
+          tools: ['theme_preview'],
         },
         {
           entryId: 'legacy-overlay-entry',
           extensionId: 'dev.maka.legacy-overlay',
           generation: 1,
-          id: 'legacy-overlay',
-          surface: 'app.overlay',
-          priority: 10,
-          document: '<aside>Legacy</aside>',
-          documentSha256: 'legacy-demo',
-          network: false,
+          id: 'dev.maka.legacy-overlay',
+          bundle: 'legacy bundle',
+          bundleSha256: 'legacy-demo',
+          inject: ['dev.maka.appearance'],
+          external: [],
+          tools: [],
         },
       ],
     }),
@@ -171,24 +152,23 @@ test('Extension control protocol strictly decodes catalog and lifecycle mutation
           entryId: 'ui-entry',
           extensionId: 'dev.maka.appearance',
           generation: 2,
-          id: 'root',
-          surface: 'app.root',
-          priority: 100,
-          document: '<main>Maka</main>',
-          documentSha256: 'demo',
-          network: false,
-          sessionAccess: true,
+          id: 'dev.maka.appearance',
+          bundle: 'appearance bundle',
+          bundleSha256: 'demo',
+          inject: [],
+          external: ['dev.maka.theme'],
+          tools: ['theme_preview'],
         },
         {
           entryId: 'legacy-overlay-entry',
           extensionId: 'dev.maka.legacy-overlay',
           generation: 1,
-          id: 'legacy-overlay',
-          surface: 'app.overlay',
-          priority: 10,
-          document: '<aside>Legacy</aside>',
-          documentSha256: 'legacy-demo',
-          network: false,
+          id: 'dev.maka.legacy-overlay',
+          bundle: 'legacy bundle',
+          bundleSha256: 'legacy-demo',
+          inject: ['dev.maka.appearance'],
+          external: [],
+          tools: [],
         },
       ],
     },
@@ -267,6 +247,26 @@ test('Extension control protocol strictly decodes catalog and lifecycle mutation
     }),
     { extensionId: 'weather' },
   );
+  assert.deepEqual(
+    decodeExtensionClientToolInvokeInput({
+      entryId: 'desktop-entry',
+      extensionId: 'dev.maka.canvas',
+      generation: 2,
+      id: 'dev.maka.canvas',
+      sessionId: 'session-one',
+      toolName: 'designer_get',
+      args: {},
+    }),
+    {
+      entryId: 'desktop-entry',
+      extensionId: 'dev.maka.canvas',
+      generation: 2,
+      id: 'dev.maka.canvas',
+      sessionId: 'session-one',
+      toolName: 'designer_get',
+      args: {},
+    },
+  );
   assert.throws(
     () => decodeToolPackageInstallInput({ sourcePath: '/tmp/weather-tool', source: 'inline' }),
     /Unknown Tool package install input field/u,
@@ -274,7 +274,7 @@ test('Extension control protocol strictly decodes catalog and lifecycle mutation
   assert.equal(operationAllowsRemoteOwner('extension.composition.query'), false);
   assert.equal(operationAllowsRemoteOwner('extension.composition.mutate'), false);
   assert.equal(operationAllowsRemoteOwner('extension.ui.snapshot'), false);
-  assert.equal(operationAllowsRemoteOwner('extension.ui.rpc.invoke'), false);
+  assert.equal(operationAllowsRemoteOwner('extension.client.tool.invoke'), false);
   assert.equal(operationAllowsRemoteOwner('extension.package.install'), false);
   assert.equal(operationAllowsRemoteOwner('extension.package.uninstall'), false);
   assert.equal(operationAllowsRemoteOwner('extension.package.export'), false);

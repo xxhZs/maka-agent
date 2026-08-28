@@ -28,6 +28,7 @@ import {
   type TurnFooterActionMeta,
   type TurnPresentationDeriver,
 } from './chat-turn.js';
+import { SlotOutlet } from './ui-slots.js';
 import { useChatScroll } from './use-chat-scroll.js';
 import { useProgressiveTurnMount } from './use-progressive-turn-mount.js';
 import { createTurnSizeIndex, layoutKeyOf, measureSettledGeometry } from './turn-size-index.js';
@@ -686,7 +687,10 @@ export function ChatView(props: {
               {mountedTurns.map((turn) => {
                 return (
                   <Fragment key={turn.turnId}>
-                    <TurnView
+                    <SlotOutlet
+                      name="conversation.chat.node"
+                      owner={{ node: turn }}
+                      options={{ entryKey: 'turn', fallback: <TurnView
                       turn={turn}
                       seededHeight={seededGeometry?.heights.get(turn.turnId)}
                       userLabel={props.userLabel}
@@ -722,6 +726,7 @@ export function ChatView(props: {
                             }
                           : undefined
                       }
+                    /> }}
                     />
                     {conversationItemsByTurn.get(turn.turnId)?.map((item) => (
                       <Fragment key={item.id}>{item.content}</Fragment>
